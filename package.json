@@ -1,0 +1,35 @@
+{
+  "name": "agnes-video-deepagent",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A resumable agent for 4-12 second Agnes video with ElevenLabs Foley and Free.ai ACE-Step music.",
+  "type": "module",
+  "main": "dist/src/index.js",
+  "types": "dist/src/index.d.ts",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/src/cli.js",
+    "media:smoke": "node --import tsx scripts/media-smoke.ts",
+    "test": "node --import tsx --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@derhuerst/ffprobe-static": "5.3.0",
+    "@freetier/orchestrator": "github:RY0502/freetier-orchestrator#5432367c163c22adf8a6f18650b6fcc417c5239c",
+    "@langchain/core": "1.2.9",
+    "dotenv": "16.6.1",
+    "ffmpeg-static": "5.3.0",
+    "freetier-deepagent-framework": "github:RY0502/freetier-deepagent-framework#f8b7e59020c639af45c142258ddf780bf9471594",
+    "googleapis": "178.0.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.18.0",
+    "tsx": "4.20.5",
+    "typescript": "5.9.2"
+  }
+}
