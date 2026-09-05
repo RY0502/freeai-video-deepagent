@@ -8,6 +8,7 @@ export * from "./final-video.js";
 export * as media from "./media/index.js";
 export * from "./run-index.js";
 export * from "./reconcile.js";
+export * from "./pause.js";
 export * from "./state/index.js";
 export * from "./tools/videoAgentTools.js";
 export * from "./vision/index.js";

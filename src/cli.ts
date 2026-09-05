@@ -17,6 +17,7 @@ import { FREE_AI_MUSIC_MODEL, FreeAiMusicClient } from "./freeai/index.js";
 import { SOURCE_AUDIO_INSPECTION_REVISION } from "./media/index.js";
 import { reconcileDueMediaCheckpoints } from "./reconcile.js";
 import { createLocalRunIndex, loadLocalRunIndex } from "./run-index.js";
+import { pauseVmBeforeExit } from "./pause.js";
 import {
   VideoRunStateStore,
   videoCheckpointKeys,
@@ -761,5 +762,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   main().catch((error) => {
     console.error(`Video agent failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
+  }).finally(async () => {
+    await pauseVmBeforeExit();
   });
 }
