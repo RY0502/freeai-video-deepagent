@@ -759,10 +759,23 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  let pausePromise: Promise<void> | undefined;
+  const pauseOnce = (): Promise<void> => {
+    pausePromise ??= pauseVmBeforeExit();
+    return pausePromise;
+  };
+  const handleTerminationSignal = (signal: NodeJS.Signals): void => {
+    const exitCode = signal === "SIGINT" ? 130 : 143;
+    void pauseOnce().finally(() => process.exit(exitCode));
+  };
+
+  process.once("SIGINT", handleTerminationSignal);
+  process.once("SIGTERM", handleTerminationSignal);
+
   main().catch((error) => {
     console.error(`Video agent failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   }).finally(async () => {
-    await pauseVmBeforeExit();
+    await pauseOnce();
   });
 }
