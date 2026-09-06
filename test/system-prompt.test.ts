@@ -217,6 +217,9 @@ test('video system prompt requires generated YouTube metadata when upload is req
     youtubeUploadAuthorized: true,
   });
   assert.match(value, /Generate accurate title, description, tags, and category metadata/i);
+  assert.match(value, /useful description based on the finished story/i);
+  assert.match(value, /Do not disclose AI generation, the AI provider, or the model used/i);
+  assert.doesNotMatch(value, /description that discloses AI generation/i);
   assert.match(value, /5-12 specific unique tags/i);
   assert.match(value, /`24` Entertainment/i);
   assert.match(value, /exact trusted runtime values for privacy and made-for-kids status/i);
