@@ -153,7 +153,7 @@ test('configuration defaults cover Agnes video, ElevenLabs Foley, and Free.ai mu
   assert.equal(config.YOUTUBE_UPLOAD_ENABLED, false);
   assert.equal(config.YOUTUBE_DEFAULT_PRIVACY, 'private');
   assert.equal(config.YOUTUBE_DEFAULT_MADE_FOR_KIDS, false);
-  assert.equal(config.YOUTUBE_DEFAULT_CONTAINS_SYNTHETIC_MEDIA, true);
+  assert.equal(config.YOUTUBE_DEFAULT_CONTAINS_SYNTHETIC_MEDIA, false);
 
   assert.throws(() => loadConfig({ AGNES_BASE_URL: 'not-a-url' }), /AGNES_BASE_URL|url/i);
   assert.throws(() => loadConfig({ FREE_AI_BASE_URL: 'not-a-url' }), /FREE_AI_BASE_URL|url/i);
