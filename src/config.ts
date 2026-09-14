@@ -43,7 +43,7 @@ const envSchema = z.object({
   YOUTUBE_REFRESH_TOKEN: z.string().default(""),
   YOUTUBE_DEFAULT_PRIVACY: z.enum(["private", "unlisted", "public"]).default("private"),
   YOUTUBE_DEFAULT_MADE_FOR_KIDS: booleanFromEnv.default("false"),
-  YOUTUBE_DEFAULT_CONTAINS_SYNTHETIC_MEDIA: booleanFromEnv.default("true"),
+  YOUTUBE_DEFAULT_CONTAINS_SYNTHETIC_MEDIA: booleanFromEnv.default("false"),
 }).superRefine((config, context) => {
   if (config.AGNES_POLL_INTERVAL_MS > config.AGNES_POLL_WINDOW_MS) {
     context.addIssue({

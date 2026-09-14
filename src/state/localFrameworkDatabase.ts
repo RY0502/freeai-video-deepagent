@@ -56,6 +56,13 @@ interface LocalGraphWrite {
   value: unknown;
 }
 
+export interface PlanningGraphRestartResult {
+  restarted: boolean;
+  clearedTodos: number;
+  clearedCheckpoints: number;
+  clearedWrites: number;
+}
+
 interface LocalFrameworkDocument {
   schemaVersion: 2;
   run: LocalAgentRun | null;
@@ -109,6 +116,14 @@ async function writeJsonAtomic(filePath: string, value: unknown): Promise<void> 
     await unlink(temporaryPath).catch(() => undefined);
     throw error;
   }
+}
+
+function nextRevisionTimestamp(previous: string): string {
+  const previousMilliseconds = Date.parse(previous);
+  return new Date(Math.max(
+    Date.now(),
+    Number.isFinite(previousMilliseconds) ? previousMilliseconds + 1 : Date.now(),
+  )).toISOString();
 }
 
 function validateDocument(value: unknown, filePath: string): LocalFrameworkDocument {
@@ -267,6 +282,196 @@ export class LocalFrameworkDatabase {
       run.final_result = null;
       run.updated_at = new Date().toISOString();
       document.todos = [];
+    });
+  }
+
+  /**
+   * Atomically discard an earlier pre-media LangGraph transcript before a new
+   * application invocation replans the same prompt. This is deliberately
+   * compare-and-set guarded: a caller that observed an older run revision may
+   * not erase graph work written by a newer process. Video plans, provider
+   * receipts, and media checkpoints are stored outside this document and are
+   * never touched here; the caller must verify those are absent first.
+   */
+  async restartPreMediaPlanningState(
+    promptHash: string,
+    expected: Pick<LocalAgentRun, "status" | "thread_id" | "updated_at">,
+    reason: string,
+    initialProvider: string,
+  ): Promise<PlanningGraphRestartResult> {
+    this.#assertPromptHash(promptHash);
+    return this.#mutate((document) => {
+      const run = this.#requireRun(document);
+      const unchanged = run.status === expected.status
+        && run.thread_id === expected.thread_id
+        && run.updated_at === expected.updated_at;
+      if (!unchanged) {
+        return {
+          restarted: false,
+          clearedTodos: 0,
+          clearedCheckpoints: 0,
+          clearedWrites: 0,
+        };
+      }
+
+      const clearedTodos = document.todos.length;
+      let clearedCheckpoints = 0;
+      let clearedWrites = 0;
+      document.todos = [];
+      for (const [key, checkpoint] of Object.entries(document.checkpoints)) {
+        if (checkpoint.thread_id !== run.thread_id) continue;
+        delete document.checkpoints[key];
+        clearedCheckpoints += 1;
+      }
+      for (const [key, write] of Object.entries(document.writes)) {
+        if (write.thread_id !== run.thread_id) continue;
+        delete document.writes[key];
+        clearedWrites += 1;
+      }
+
+      const previousStatus = run.status;
+      run.status = "in_progress";
+      run.current_provider = initialProvider;
+      run.final_result = null;
+      run.error_message = null;
+      const restartedAt = nextRevisionTimestamp(run.updated_at);
+      run.updated_at = restartedAt;
+      document.events.push({
+        id: (document.events.at(-1)?.id ?? 0) + 1,
+        event_type: "pre_media_planning_state_restarted",
+        details: {
+          reason,
+          previousStatus,
+          resetProvider: initialProvider,
+          clearedTodos,
+          clearedCheckpoints,
+          clearedWrites,
+        },
+        created_at: restartedAt,
+      });
+      return {
+        restarted: true,
+        clearedTodos,
+        clearedCheckpoints,
+        clearedWrites,
+      };
+    });
+  }
+
+  /**
+   * Reopen only the exact framework completion that the caller just rejected.
+   * The compare-and-set guard prevents a stale process from overwriting a newer
+   * successful agent result. Video/media state lives in separate durable files
+   * and is deliberately untouched.
+   */
+  async reopenRejectedCompletion(
+    promptHash: string,
+    expectedFinalResult: string,
+    reason: string,
+  ): Promise<boolean> {
+    this.#assertPromptHash(promptHash);
+    return this.#mutate((document) => {
+      const run = this.#requireRun(document);
+      if (run.status !== "completed" || run.final_result !== expectedFinalResult) return false;
+
+      run.status = "in_progress";
+      run.final_result = null;
+      run.error_message = reason;
+      run.updated_at = new Date().toISOString();
+      document.todos = [];
+      for (const [key, checkpoint] of Object.entries(document.checkpoints)) {
+        if (checkpoint.thread_id === run.thread_id) delete document.checkpoints[key];
+      }
+      for (const [key, write] of Object.entries(document.writes)) {
+        if (write.thread_id === run.thread_id) delete document.writes[key];
+      }
+      document.events.push({
+        id: (document.events.at(-1)?.id ?? 0) + 1,
+        event_type: "agent_completion_rejected",
+        details: { reason },
+        created_at: new Date().toISOString(),
+      });
+      return true;
+    });
+  }
+
+  /**
+   * Reopen only the exact transient framework failure observed by the caller.
+   * The framework currently classifies non-Requesty 5xx responses as retryable
+   * but still marks the run failed before rethrowing them. Clear only its agent
+   * graph state so a bounded host retry starts a clean planning turn; durable
+   * video plans and media receipts live in separate files and are untouched.
+   */
+  async reopenRetryableFailure(
+    promptHash: string,
+    expectedErrorMessage: string,
+    expectedFailureUpdatedAt: string,
+    reason: string,
+  ): Promise<boolean> {
+    this.#assertPromptHash(promptHash);
+    return this.#mutate((document) => {
+      const run = this.#requireRun(document);
+      if (
+        run.status !== "failed"
+        || run.error_message !== expectedErrorMessage
+        || run.updated_at !== expectedFailureUpdatedAt
+      ) return false;
+
+      run.status = "in_progress";
+      run.final_result = null;
+      run.error_message = reason;
+      run.updated_at = new Date().toISOString();
+      document.todos = [];
+      for (const [key, checkpoint] of Object.entries(document.checkpoints)) {
+        if (checkpoint.thread_id === run.thread_id) delete document.checkpoints[key];
+      }
+      for (const [key, write] of Object.entries(document.writes)) {
+        if (write.thread_id === run.thread_id) delete document.writes[key];
+      }
+      document.events.push({
+        id: (document.events.at(-1)?.id ?? 0) + 1,
+        event_type: "retryable_agent_failure_reopened",
+        details: { reason },
+        created_at: new Date().toISOString(),
+      });
+      return true;
+    });
+  }
+
+  /** Commit a recovered invocation only while the exact observed failure is current. */
+  async completeRetryableFailureFromDurableState(
+    promptHash: string,
+    expectedErrorMessage: string,
+    expectedFailureUpdatedAt: string,
+    finalResult: string,
+  ): Promise<boolean> {
+    this.#assertPromptHash(promptHash);
+    return this.#mutate((document) => {
+      const run = this.#requireRun(document);
+      if (
+        run.status !== "failed"
+        || run.error_message !== expectedErrorMessage
+        || run.updated_at !== expectedFailureUpdatedAt
+      ) return false;
+
+      run.status = "completed";
+      run.final_result = finalResult;
+      run.error_message = null;
+      run.updated_at = new Date().toISOString();
+      document.todos = [];
+      for (const [key, checkpoint] of Object.entries(document.checkpoints)) {
+        if (checkpoint.thread_id === run.thread_id) delete document.checkpoints[key];
+      }
+      for (const [key, write] of Object.entries(document.writes)) {
+        if (write.thread_id === run.thread_id) delete document.writes[key];
+      }
+      document.events.push({
+        id: (document.events.at(-1)?.id ?? 0) + 1,
+        event_type: "retryable_agent_failure_recovered",
+        details: { recovery: "durable_video_state" },
+        created_at: new Date().toISOString(),
+      });
+      return true;
     });
   }
 

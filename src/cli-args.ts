@@ -48,7 +48,8 @@ export const CLI_HELP = `Usage:
   npm run dev -- --resume <run-id>
   npm run dev -- --status <run-id>
 
-Each prompt command starts an isolated run, so identical prompts may execute
-concurrently. Accepted Agnes tasks are continued with --resume and their run ID.
-Resume uses the stored original prompt and never duplicates an accepted task.
+Repeating the same normalized prompt reuses its most recently updated local run.
+Do not execute the same prompt or run ID simultaneously; local state is single-writer.
+Different prompts use different run directories and may execute concurrently.
+Accepted Agnes tasks can be continued with the exact prompt or --resume <run-id>.
 YouTube publication additionally requires --youtube and enabled OAuth settings.`;

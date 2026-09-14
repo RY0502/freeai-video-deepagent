@@ -2,11 +2,13 @@
 
 A resumable Node.js/TypeScript agent that turns a prompt into one continuous 4–12 second Agnes Video 2.5 Flash render with an enriched native sound design, preserves that embedded soundtrack when it is usable, falls back to precisely timed ElevenLabs effects when it is not, and overlays an optional quiet Free.ai ACE-Step music bed before assembling an H.264/AAC MP4 with bundled FFmpeg.
 
-Every prompt invocation gets an isolated `runs/<run-id>/` directory, even when identical prompts are triggered simultaneously. Plans, provider receipts, checkpoints, and artifacts remain local; no database is used. Continue a pending run explicitly with `--resume <run-id>` so accepted tasks and existing artifacts are reused without making a duplicate request.
+The first invocation of a normalized prompt creates a local `runs/<run-id>/` directory. Repeating that prompt reuses its most recently updated matching run, plan, provider receipts, checkpoints, and artifacts; no database is used. You can also continue a specific pending run with `--resume <run-id>`. A run directory is single-writer: do not execute the same prompt or run ID simultaneously. Different prompts use different directories and may execute concurrently.
 
 ## Generation lifecycle
 
 The planning LLM expands a short concept into a small visual story with a setup, development, and payoff. Unless the prompt explicitly requests a shorter result, it targets 10–12 seconds and uses the extra time for same-context anticipation, environmental reveal, readable development, reaction, or aftermath—not unrelated filler or frozen holds. Explicit 4–9 second duration requests remain supported. It deliberately uses only 2–4 broad beats, one dominant action per beat, wider timing windows, and simple sequential choreography that Agnes can plausibly render. It creates one gap-free global timeline, not multiple video clips. It preserves sounds named by the user and also infers a small natural soundscape from visible subjects, actions, materials, and environment. Every retained sound-causing action starts with the same absolute timestamp in:
+
+Plan validation is deliberately a finite technical boundary, not a subjective prompt-compliance judge. Malformed tool data, invalid timing, unsupported media settings, and untrusted upload controls can block a plan. Creative omissions such as an unstated sound or dialogue line are logged as coverage warnings instead of sending the LLM through open-ended correction loops. New Agnes submissions also receive the sanitized original user request alongside the compact plan, so that request remains the binding source of creative intent.
 
 - the Agnes visual prompt;
 - the shared Agnes-native/ElevenLabs-fallback cue sheet; and
@@ -56,7 +58,7 @@ ACE-Step normally produces at least 10 seconds. For a 4–9 second video the pro
 
 ## Local state and reuse
 
-The normalized prompt produces a stable 64-character run ID:
+The normalized prompt produces a stable SHA-256 prompt hash used to find the most recently updated matching run. The run itself has a separate 64-character random ID:
 
 ```text
 runs/
@@ -83,6 +85,8 @@ runs/
 Final filenames are derived deterministically from the user prompt after removing generic command wording and host-only control markers. Unsafe filesystem punctuation is replaced, names are UTF-8 byte-bounded, and the assembly attempt remains as a numeric suffix. Retained legacy `final-N.mp4` checkpoints continue to work.
 
 The plan is immutable once validated. Completed local artifacts are checksummed and reused. The source-audio decision is bound to the exact source-video checksum, duration, and inspection revision. A native selection reuses that source directly; a fallback Foley stem is additionally bound to its exact vision reconciliation. Each final MP4 records the foreground mode plus the source, source-audio analysis, optional Foley/reconciliation, and included-music checksums (or durable skipped/disabled music state), so changing any retained dependency forces a deterministic rebuild instead of reusing a stale mix. Agnes retrieval is bound to the full SHA-256 fingerprint of the key that submitted the task, so changing key order cannot make a resumed run poll the wrong account. API keys and signed media URLs are not exposed in status output.
+
+Local JSON writes are atomically published for crash recovery, but they are not a cross-process transaction or lock. Wait for an invocation of a prompt/run ID to finish or cancel it before starting the same one again. Simultaneous invocations are supported only when they resolve to different run directories, normally by using different prompts.
 
 There is one unavoidable ambiguity boundary: if the process loses the connection after Agnes may have accepted the POST but before it receives `video_id`, the application cannot safely prove whether a job exists. Agnes documents no idempotency key or account-history lookup for this API. The checkpoint is therefore marked `unknown` and automatic resubmission is blocked, preventing an accidental duplicate render. In contrast, Agnes's explicit `video queue is full, please retry later` response contains no accepted-task receipt and is stored as retry-safe; resuming that run reuses the locked plan but makes a new POST. Older checkpoints that misclassified that exact response as `unknown` are migrated automatically only when they contain no task ID, external ID, URL, or provider receipt.
 
@@ -190,8 +194,8 @@ npm run dev -- --youtube "A red kite masters a gusty hill"
 
 | Command | Purpose |
 |---|---|
-| `npm run dev -- "<prompt>"` | Start a new isolated run, including for an identical prompt |
-| `npm run dev -- --youtube "<prompt>"` | Start a run with explicit YouTube publication authorization |
+| `npm run dev -- "<prompt>"` | Create a run, or reuse the most recently updated run for the same normalized prompt |
+| `npm run dev -- --youtube "<prompt>"` | Create or reuse a run with explicit YouTube publication authorization |
 | `npm run dev -- --resume <run-id>` | Resume the stored original prompt |
 | `npm run dev -- --status <run-id>` | Print local progress without provider calls |
 | `npm run typecheck` | Strict TypeScript validation |

@@ -1,4 +1,12 @@
 export {
+  VideoPlanningAttemptsExhaustedError,
+  createVideoPlanningAttemptBudget,
+  ensureDeepAgentPlanningMiddleware,
+  videoPlanContinuationMiddleware,
+  withVideoPlanningAttemptBudget,
+  type VideoPlanningAttemptBudget,
+} from './deepAgentCompatibility.js';
+export {
   createValidateVideoPlanTool,
 } from './planTool.js';
 export {
@@ -26,6 +34,7 @@ export {
   type VideoVisualStyle,
 } from './mediaPreferences.js';
 export {
+  createVideoPlanningSystemPrompt,
   createVideoSystemPrompt,
   type VideoAgentToolNames,
   type VideoSystemPromptOptions,
@@ -64,6 +73,16 @@ export {
   type VideoPlan,
   type YouTubeUploadRequest,
 } from './videoPlan.js';
+export {
+  VideoPlanDraftInputSchema,
+  VideoPlanDraftSchema,
+  VideoPlanDraftTransportError,
+  materializeVideoPlanDraft,
+  parseVideoPlanDraft,
+  type MaterializeVideoPlanDraftOptions,
+  type VideoPlanDraft,
+  type VideoPlanDraftInput,
+} from './videoPlanDraft.js';
 export {
   YouTubeUploadAuthorizationError,
   createBootstrappedVideoAgentRunner,

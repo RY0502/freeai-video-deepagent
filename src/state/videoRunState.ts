@@ -250,6 +250,34 @@ export class VideoRunStateStore {
     });
   }
 
+  /**
+   * Reopen a failed planning-only run without changing any durable work. The
+   * guards are intentionally repeated inside the state-store mutex so a plan
+   * or provider receipt created by another writer cannot be relabelled as a
+   * fresh planning run.
+   */
+  async reopenFailedPlanning(originalPrompt: string): Promise<boolean> {
+    return this.#exclusive(async () => {
+      const document = await this.#readDocument();
+      if (!document) return false;
+      this.#assertDocumentMatchesPrompt(document, originalPrompt);
+      if (
+        document.manifest.status !== "failed"
+        || document.manifest.planStored
+        || Object.keys(document.checkpoints).length > 0
+        || await this.#readPlanValue() !== null
+      ) return false;
+
+      document.manifest = VideoRunManifestSchema.parse({
+        ...document.manifest,
+        status: "planning",
+        updatedAt: new Date().toISOString(),
+      });
+      await this.#writeDocument(document);
+      return true;
+    });
+  }
+
   async savePlan(originalPrompt: string, input: unknown): Promise<VideoPlan> {
     return this.#exclusive(async () => {
       const document = await this.#ensureDocument(originalPrompt);

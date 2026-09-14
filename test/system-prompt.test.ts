@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { createVideoSystemPrompt } from '../src/agent/systemPrompt.js';
+import {
+  createVideoPlanningSystemPrompt,
+  createVideoSystemPrompt,
+} from '../src/agent/systemPrompt.js';
 
 function prompt(): string {
   return createVideoSystemPrompt({
@@ -17,6 +20,28 @@ function prompt(): string {
   });
 }
 
+test('planner wire prompt is compact and limits the model to the creative draft', () => {
+  const value = createVideoPlanningSystemPrompt({
+    tools: {
+      validatePlan: 'validate_video_plan',
+      generateVideo: 'generate_video',
+      generateMusic: 'generate_music_track',
+      generateFoley: 'generate_foley_track',
+      assembleVideo: 'assemble_final_video',
+    },
+    youtubeUploadRequested: false,
+    youtubeUploadAuthorized: false,
+  });
+
+  assert.ok(value.length < 5_000, `planner prompt should stay compact; received ${value.length} characters`);
+  assert.match(value, /only job is to call `validate_video_plan`/i);
+  assert.match(value, /detailed prompt already is the script/i);
+  assert.match(value, /explicitly requested vocalizations, impacts, dialogue, and punchline sounds outrank/i);
+  assert.match(value, /gaze, pose, chest puff, camera move.*is not a sound/i);
+  assert.match(value, /Never put background music, score, soundtrack.*in visualPrompt/i);
+  assert.doesNotMatch(value, /poll every 30 seconds|FFmpeg|API key|video_id/i);
+});
+
 test('video system prompt plans one creative four-to-twelve-second Agnes render', () => {
   const value = prompt();
   assert.match(value, /Agnes Video 2\.5 Flash for one generated video/i);
@@ -25,9 +50,11 @@ test('video system prompt plans one creative four-to-twelve-second Agnes render'
   assert.match(value, /never choose 4-9 seconds merely because the initial idea is brief/i);
   assert.match(value, /one continuous provider video, never a collection of short scene clips/i);
   assert.match(value, /concrete `creativeScript` with a setup, visible development, and payoff/i);
-  assert.match(value, /two to eight gap-free `timelineBeats`/i);
+  assert.match(value, /two to four chronological draft `timelineBeats`/i);
+  assert.match(value, /host code assigns exact gap-free timestamps/i);
   assert.match(value, /normally a 10-12 second duration/i);
-  assert.match(value, /schemaVersion 2/);
+  assert.match(value, /host code materializes.*schemaVersion 2 VideoPlan/i);
+  assert.match(value, /real object, never JSON encoded as a string/i);
 });
 
 test('video system prompt expands sparse ideas and compresses detailed prompts without changing their core', () => {
@@ -57,15 +84,15 @@ test('video system prompt enriches explicit and implicit diegetic sounds into on
   assert.match(value, /Do not force every noun to make a sound/i);
   assert.match(value, /at most one useful continuous ambience plus a few important foreground sounds/i);
   assert.match(value, /simplify overlapping or crowded events into sequential, legible moments/i);
-  assert.match(value, /`foleyCues` list as one shared sound blueprint/i);
+  assert.match(value, /draft `foleyCues` list as one shared sound blueprint/i);
   assert.match(value, /tells Agnes which synchronized native production sounds to render/i);
-  assert.match(value, /exact ElevenLabs fallback plan/i);
+  assert.match(value, /ElevenLabs fallback plan/i);
   assert.match(value, /Keep this cue sheet even when Agnes is expected to supply all sound/i);
 });
 
 test('video system prompt gives Agnes sparse, broad, achievable choreography', () => {
   const value = prompt();
-  assert.match(value, /Normally use two to four broad timeline beats/i);
+  assert.match(value, /Use two to four broad timeline beats and never more than four/i);
   assert.match(value, /one dominant visual action per beat/i);
   assert.match(value, /4-8 second render, normally plan one or two foreground actions/i);
   assert.match(value, /9-12 second render, normally plan two or three and never more than four/i);
@@ -74,18 +101,19 @@ test('video system prompt gives Agnes sparse, broad, achievable choreography', (
   assert.match(value, /single unmistakable peak near the middle of the window/i);
   assert.match(value, /distinct synchronized transients normally at least 1\.5 seconds apart/i);
   assert.match(value, /one continuous camera move, or a static camera/i);
-  assert.match(value, /express broad ranges first/i);
-  assert.match(value, /exact `atSeconds` is the intended peak inside that range/i);
+  assert.match(value, /describe broad action windows/i);
+  assert.match(value, /select its containing `beatNumber` and a coarse `placement`/i);
+  assert.match(value, /host code derives the exact timestamp/i);
 });
 
 test('video system prompt ties visible causes to global, sample-addressable Foley cues', () => {
   const value = prompt();
-  assert.match(value, /global `foleyCues` list as one shared sound blueprint/i);
-  assert.match(value, /Put each retained cue at its final-video-relative `atSeconds`/i);
-  assert.match(value, /copy `\[<atSeconds with two decimals>s\] <visualAction>` verbatim/i);
-  assert.match(value, /visible cause and its sound must share one timestamp/i);
-  assert.match(value, /must end by the final duration/i);
-  assert.match(value, /at least 0\.20 seconds away from the beginning and end/i);
+  assert.match(value, /draft `foleyCues` list as one shared sound blueprint/i);
+  assert.match(value, /containing one-based `beatNumber`, a coarse `placement`/i);
+  assert.match(value, /Do not calculate `atSeconds`, cue IDs, beat IDs/i);
+  assert.match(value, /host converts relative placement into a safe exact timestamp/i);
+  assert.match(value, /copies the canonical timed action into the containing beat/i);
+  assert.match(value, /Host code enforces final-duration bounds and safe context/i);
   assert.match(value, /bat-contact crack belongs at the exact contact timestamp/i);
   assert.match(value, /crowd roar begins when the successful boundary is visibly established/i);
   assert.match(value, /roar cue occurs when jaws visibly open/i);
@@ -167,13 +195,13 @@ test('video system prompt enforces one asynchronous Agnes submission and receipt
   assert.match(value, /call `generate_video` once when the source video is missing/i);
   assert.match(value, /submits one Agnes task or resumes its persisted `video_id`/i);
   assert.match(value, /polls every 30 seconds for no more than eight minutes/i);
-  assert.match(value, /If the video tool returns `status=pending`, stop all media tool calls/i);
-  assert.match(value, /never submit a replacement while a receipt exists/i);
+  assert.match(value, /If the video tool returns `status=pending`, the host stops all media tool calls/i);
+  assert.match(value, /never submits? a replacement while a receipt exists/i);
   assert.match(value, /receipt binds its `video_id` to the exact key fingerprint that submitted it/i);
   assert.match(value, /Poll only with that key; never rotate an already accepted task/i);
   assert.match(value, /Local run-ID-scoped files are the only workflow state/i);
-  assert.match(value, /exact run must be continued with its host-provided `--resume <run-id>` command/i);
-  assert.match(value, /Repeating the prompt starts an independent run/i);
+  assert.match(value, /Continue it either with the host-provided `--resume <run-id>` command/i);
+  assert.match(value, /repeating the identical prompt, which reuses the most recently updated matching local run/i);
 });
 
 test('video system prompt orders full-timeline audio, assembly validation, reuse, and cleanup safely', () => {
@@ -192,7 +220,7 @@ test('video system prompt orders full-timeline audio, assembly validation, reuse
   assert.match(value, /moving to the next numbered key on each generation retry/i);
   assert.match(value, /successful music URL is persisted before download/i);
   assert.match(value, /If the tool returns `status=skipped`, the omission is durable/i);
-  assert.match(value, /continue immediately with the selected diegetic soundtrack only/i);
+  assert.match(value, /host continues immediately with the selected diegetic soundtrack only/i);
   assert.match(value, /Assembly mixes either preserved Agnes audio or deterministic fallback Foley/i);
   assert.match(value, /with the quiet score when available/i);
   assert.match(value, /FFprobe validation of exact duration/i);
@@ -217,6 +245,9 @@ test('video system prompt requires generated YouTube metadata when upload is req
     youtubeUploadAuthorized: true,
   });
   assert.match(value, /Generate accurate title, description, tags, and category metadata/i);
+  assert.match(value, /useful description based on the finished story/i);
+  assert.match(value, /Do not disclose AI generation, the AI provider, or the model used/i);
+  assert.doesNotMatch(value, /description that discloses AI generation/i);
   assert.match(value, /5-12 specific unique tags/i);
   assert.match(value, /`24` Entertainment/i);
   assert.match(value, /exact trusted runtime values for privacy and made-for-kids status/i);

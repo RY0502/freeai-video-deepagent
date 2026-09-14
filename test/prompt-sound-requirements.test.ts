@@ -2,7 +2,37 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { VideoPlan } from '../src/agent/videoPlan.js';
-import { promptDerivedSoundRequirements } from '../src/tools/videoAgentTools.js';
+import {
+  promptDerivedSoundRequirements,
+  sanitizeAgnesVideoPrompt,
+} from '../src/tools/videoAgentTools.js';
+
+test('removes publication and post-completion cleanup instructions from the Agnes prompt', () => {
+  const sanitized = sanitizeAgnesVideoPrompt([
+    'Create a continuous cinematic shot of a cyclist crossing a bridge.',
+    'Upload the finished video to YouTube after completion.',
+    'Publish the finished video to you tube.',
+    'Perform cleanup after successful completion by deleting temporary files.',
+    'Keep the camera low and steady.',
+  ].join('\n'));
+
+  assert.match(sanitized, /cyclist crossing a bridge/);
+  assert.match(sanitized, /camera low and steady/);
+  assert.doesNotMatch(sanitized, /youtube|upload|cleanup|temporary files/i);
+});
+
+test('removes editorial score directions from Agnes while retaining their joined visual action', () => {
+  const sanitized = sanitizeAgnesVideoPrompt([
+    'The chicken checks the quiet road.',
+    'Dramatic heroic music plays as the chicken walks proudly toward the far side.',
+    'Generate synchronized natural clucks.',
+    'Do not generate background music, score, songs, or lyrics.',
+  ].join(' '));
+
+  assert.doesNotMatch(sanitized, /dramatic heroic music plays/i);
+  assert.match(sanitized, /chicken walks proudly toward the far side/i);
+  assert.match(sanitized, /Do not generate background music, score, songs, or lyrics/i);
+});
 
 function contextPlan(context: string): VideoPlan {
   return {
@@ -16,10 +46,12 @@ function requirementMatchesCue(
   requirement: ReturnType<typeof promptDerivedSoundRequirements>[number],
   sound: string,
   prominence: 'foreground' | 'supporting' | 'ambient' = 'foreground',
+  visualAction = '',
 ): boolean {
   const normalizedSound = sound.toLowerCase().replace(/\s+/g, ' ').trim();
+  const audibleCause = `${sound} ${visualAction}`.toLowerCase().replace(/\s+/g, ' ').trim();
   return requirement.pattern.test(normalizedSound)
-    && (!requirement.sourcePattern || requirement.sourcePattern.test(normalizedSound))
+    && (!requirement.sourcePattern || requirement.sourcePattern.test(audibleCause))
     && (!requirement.foreground || prominence === 'foreground');
 }
 
@@ -65,10 +97,50 @@ test('cat-only and dog-only vocal intent are not attributed to the other animal'
   assert.equal(dogOnly.some(({ label }) => /cat\/feline/.test(label)), false);
 });
 
+test('an explicit chicken cluck remains a required foreground vocal cue', () => {
+  const requirements = promptDerivedSoundRequirements(contextPlan(
+    'The chicken looks into camera and produces one funny cluck after the punchline.',
+  ));
+  const chicken = requirements.find(({ label }) => /chicken cluck/.test(label));
+
+  assert.ok(chicken);
+  assert.equal(requirementMatchesCue(
+    chicken,
+    'One funny natural cluck.',
+    'foreground',
+    'The visible chicken opens its beak and clucks after the punchline.',
+  ), true);
+  assert.equal(requirementMatchesCue(chicken, 'A distant bird call.', 'supporting'), false);
+});
+
 test('lexical lookalikes and anatomical canine teeth do not trigger animal vocals', () => {
   const requirements = promptDerivedSoundRequirements(contextPlan(
     'A tiger bares its canine teeth and growls beside a dogwood tree with rough bark; a category card is visible.',
   ));
 
   assert.equal(requirements.some(({ label }) => /dog\/canine|cat\/feline/.test(label)), false);
+});
+
+test('a brief background car pass is not misclassified as full-length foreground road audio', () => {
+  const requirements = promptDerivedSoundRequirements(contextPlan(
+    'A chicken crosses back toward its starting point while a car passes safely in the background.',
+  ));
+
+  // A distant supporting vehicle may be inaudible and must not complicate the
+  // foreground cue sheet unless the director deliberately chooses it.
+  assert.equal(requirements.some(({ label }) => /vehicle pass-by/.test(label)), false);
+  assert.equal(requirements.some(({ label }) => /continuous engine/.test(label)), false);
+
+  const backgroundDrive = promptDerivedSoundRequirements(contextPlan(
+    'The chicken walks seriously while a car drives through the distant background.',
+  ));
+  assert.equal(backgroundDrive.some(({ label }) => /continuous engine/.test(label)), false);
+
+  const driving = promptDerivedSoundRequirements(contextPlan(
+    'A car drives continuously along a coastal road for the complete shot; distant mountains remain in the background.',
+  ));
+  const continuous = driving.find(({ label }) => /continuous engine/.test(label));
+  assert.ok(continuous);
+  assert.equal(continuous.continuous, true);
+  assert.equal(continuous.foreground, true);
 });

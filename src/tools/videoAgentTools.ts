@@ -5,6 +5,7 @@ import path from "node:path";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
+import { stripYouTubeUploadAuthorization } from "../authorization.js";
 import {
   AGNES_VIDEO_MODEL,
   AgnesError,
@@ -25,7 +26,12 @@ import {
 } from "../agent/mediaPreferences.js";
 import { recoverableVideoPlanRejection } from "../agent/planTool.js";
 import {
-  VideoPlanSchema,
+  VideoPlanDraftInputSchema,
+  VideoPlanDraftTransportError,
+  materializeVideoPlanDraft,
+  type VideoPlanDraft,
+} from "../agent/videoPlanDraft.js";
+import {
   enabledMusicForPlan,
   parseVideoPlanForPrompt,
   planUsesBackgroundMusic,
@@ -95,7 +101,6 @@ import {
 import { YouTubeUploadError, type YouTubeUploader } from "../youtube/index.js";
 
 const EmptyInputSchema = z.object({}).strict();
-const ValidatePlanInputSchema = z.object({ plan: VideoPlanSchema }).strict();
 
 export const VIDEO_TOOL_NAMES = {
   status: "get_video_run_status",
@@ -108,7 +113,7 @@ export const VIDEO_TOOL_NAMES = {
 } as const;
 
 /** Increment only when the deterministic text sent to Agnes changes. */
-export const AGNES_PROMPT_REVISION = 2 as const;
+export const AGNES_PROMPT_REVISION = 4 as const;
 
 export const FOLEY_PROMINENCE_GAIN: Readonly<Record<TimedFoleyCue["prominence"], number>> =
   Object.freeze({ foreground: 1, supporting: 0.55, ambient: 0.4 });
@@ -214,6 +219,9 @@ export interface ResolvedGenerationConfiguration {
 
 export type VideoAgentEvent =
   | { event: "generation_configuration"; phase: "prompt_resolved" | "plan_locked" | "plan_reused"; configuration: Record<string, unknown> }
+  | { event: "video_plan_normalized"; addedFoleyCues: string[]; adjustedFoleyCues: string[]; removedFoleyCues: string[] }
+  | { event: "video_plan_coverage_warning"; missingDialogue: string[]; missingSounds: string[]; originalPromptForwardedToAgnes: true }
+  | { event: "video_plan_rejected"; code: string; message: string; recoverable: boolean }
   | { event: "video_submission_started"; model: typeof AGNES_VIDEO_MODEL; attemptNumber: number; resubmission: boolean; durationSeconds: number; aspectRatio: string; requestTimeoutMs: number; pollIntervalMs: number; pollWindowMs: number; controls: VideoPromptControls }
   | { event: "video_key_attempt"; keyLabel: string }
   | { event: "video_task_submitted"; videoId: string; taskId: string; status: AgnesTaskStatus; progress: number; keyLabel: string }
@@ -436,16 +444,29 @@ interface PromptDerivedSoundRequirement {
   sourcePattern?: RegExp;
   foreground?: boolean;
   continuous?: boolean;
+  fallbackSound: string;
+  fallbackVisualAction: string;
 }
 
 /** Required semantic Foley layers inferred from common prompt actions. */
-export function promptDerivedSoundRequirements(plan: VideoPlan): PromptDerivedSoundRequirement[] {
-  const context = normalized(`${plan.concept} ${plan.creativeScript} ${plan.visualPrompt}`);
+export function promptDerivedSoundRequirements(
+  plan: VideoPlan,
+  originalPrompt = "",
+): PromptDerivedSoundRequirement[] {
+  const context = normalized(
+    `${originalPrompt} ${plan.concept} ${plan.creativeScript} ${plan.visualPrompt}`,
+  );
   const requirements: PromptDerivedSoundRequirement[] = [];
   if (
     /\b(?:dinosaur|dinosaurs|dino|theropod|tyrannosaur|raptor|triceratops)\b/.test(context)
     && /\b(?:fight|fighting|attack|lunge|roar|growl)\b/.test(context)
-  ) requirements.push({ label: "a foreground dinosaur roar/growl", pattern: /\b(?:roar|growl|bellow|snarl)\b/, foreground: true });
+  ) requirements.push({
+    label: "a foreground dinosaur roar/growl",
+    pattern: /\b(?:roar|growl|bellow|snarl)\b/,
+    foreground: true,
+    fallbackSound: "One natural foreground roar from the visible dinosaur.",
+    fallbackVisualAction: "The visible dinosaur opens its jaws wide and clearly produces one roar.",
+  });
   if (
     /\b(?:dogs?|pupp(?:y|ies)|canines?(?!\s+(?:tooth|teeth)\b))\b/.test(context)
     && /\b(?:bark(?:s|ed|ing)?|growl(?:s|ed|ing)?|snarl(?:s|ed|ing)?)\b/.test(context)
@@ -455,6 +476,8 @@ export function promptDerivedSoundRequirements(plan: VideoPlan): PromptDerivedSo
       pattern: /\b(?:bark(?:s|ed|ing)?|growl(?:s|ed|ing)?|snarl(?:s|ed|ing)?|woofs?)\b/,
       sourcePattern: /\b(?:dogs?|pupp(?:y|ies)|canines?(?!\s+(?:tooth|teeth)\b))\b/,
       foreground: true,
+      fallbackSound: "One natural foreground bark from the visible dog.",
+      fallbackVisualAction: "The visible dog opens its mouth and clearly produces one bark.",
     });
   }
   if (
@@ -466,34 +489,290 @@ export function promptDerivedSoundRequirements(plan: VideoPlan): PromptDerivedSo
       pattern: /\b(?:m(?:eow|iaow)(?:s|ed|ing)?|mew(?:s|ed|ing)?|hiss(?:es|ed|ing)?|growl(?:s|ed|ing)?)\b/,
       sourcePattern: /\b(?:cats?|felines?|kittens?)\b/,
       foreground: true,
+      fallbackSound: "One natural foreground meow from the visible cat.",
+      fallbackVisualAction: "The visible cat opens its mouth and clearly produces one meow.",
     });
   }
   if (
-    /\b(?:car|vehicle|truck|motorcycle|driving|road)\b/.test(context)
-    && /\b(?:drive|drives|driving|cruise|cruises|moving|road)\b/.test(context)
-  ) requirements.push({ label: "continuous engine/tire road sound", pattern: /\b(?:engine|motor|tire|tyre|road noise)\b/, foreground: true, continuous: true });
+    /\b(?:chickens?|hens?|roosters?|chicks?)\b/.test(context)
+    && /\b(?:cluck(?:s|ed|ing)?|crow(?:s|ed|ing)?)\b/.test(context)
+  ) {
+    requirements.push({
+      label: "a foreground chicken cluck or crow",
+      pattern: /\b(?:cluck(?:s|ed|ing)?|crow(?:s|ed|ing)?)\b/,
+      sourcePattern: /\b(?:chickens?|hens?|roosters?|chicks?)\b/,
+      foreground: true,
+      fallbackSound: "One funny natural foreground cluck from the visible chicken.",
+      fallbackVisualAction: "The visible chicken opens its beak and clearly produces one funny cluck.",
+    });
+  }
+  const hasRoadVehicle = /\b(?:car|vehicle|truck|motorcycle)\b/.test(context);
+  const vehicleNoun = '(?:car|vehicle|truck|motorcycle)';
+  const vehicleMovement = '(?:pass|passes|passing|passed|drive|drives|driving|drove|move|moves|moving|travel|travels|traveling)';
+  const backgroundVehiclePass = hasRoadVehicle && (
+    new RegExp(`\\b${vehicleNoun}\\b[^.!?;]{0,48}\\b${vehicleMovement}\\b[^.!?;]{0,32}\\b(?:in|through|across|along|behind)\\s+(?:the\\s+)?(?:distant\\s+)?background\\b`).test(context)
+    || new RegExp(`\\b(?:in|through|across|along)\\s+(?:the\\s+)?(?:distant\\s+)?background\\b[^.!?;]{0,48}\\b${vehicleNoun}\\b[^.!?;]{0,32}\\b${vehicleMovement}\\b`).test(context)
+    || /\b(?:pass|passes|passing|passed)\b[^.!?;]{0,48}\b(?:background|behind|distant|distance)\b|\b(?:background|behind|distant|distance)\b[^.!?;]{0,48}\b(?:pass|passes|passing|passed)\b/.test(context)
+  );
+  if (
+    !backgroundVehiclePass
+    && hasRoadVehicle
+    && /\b(?:drive|drives|driving|cruise|cruises|cruising|travel|travels|traveling|moving)\b/.test(context)
+  ) {
+    requirements.push({
+      label: "continuous engine/tire road sound",
+      pattern: /\b(?:engine|motor|tire|tyre|road noise)\b/,
+      foreground: true,
+      continuous: true,
+      fallbackSound: "Continuous natural engine and tire noise from the visible moving vehicle.",
+      fallbackVisualAction: "The visible vehicle keeps moving along the road while its tires remain in contact with the surface.",
+    });
+  }
   if (/\b(?:rain|raining|rainfall|downpour|drizzle|storm)\b/.test(context)) {
-    requirements.push({ label: "continuous rain sound", pattern: /\b(?:rain|rainfall|downpour|drizzle)\b/, continuous: true });
+    requirements.push({
+      label: "continuous rain sound",
+      pattern: /\b(?:rain|rainfall|downpour|drizzle)\b/,
+      continuous: true,
+      fallbackSound: "Continuous natural rainfall across the visible environment.",
+      fallbackVisualAction: "Visible rain falls continuously and strikes the established surfaces and foliage.",
+    });
   }
   if (/\b(?:coast|coastal|ocean|sea|shore|beach)\b/.test(context)) {
-    requirements.push({ label: "continuous coastal surf/wind ambience", pattern: /\b(?:ocean|surf|wave|coastal wind)\b/, continuous: true });
+    requirements.push({
+      label: "continuous coastal surf/wind ambience",
+      pattern: /\b(?:ocean|surf|wave|coastal wind)\b/,
+      continuous: true,
+      fallbackSound: "Continuous restrained ocean surf and coastal wind ambience.",
+      fallbackVisualAction: "The visible sea and shoreline remain established while waves and coastal air move naturally.",
+    });
   }
   if (
     /\b(?:batsman|batter|cricket)\b/.test(context)
     && /\b(?:hit|hits|strikes|shot|ball)\b/.test(context)
-  ) requirements.push({ label: "a synchronized bat-ball impact", pattern: /\b(?:bat.{0,20}(?:hit|impact|contact)|ball.{0,20}(?:hit|impact|contact)|crack of the bat)\b/, foreground: true });
+  ) requirements.push({
+    label: "a synchronized bat-ball impact",
+    pattern: /\b(?:bat.{0,20}(?:hit|impact|contact)|ball.{0,20}(?:hit|impact|contact)|crack of the bat)\b/,
+    foreground: true,
+    fallbackSound: "One sharp foreground crack as the visible bat contacts the visible ball.",
+    fallbackVisualAction: "The visible bat makes unmistakable contact with the visible ball at the peak of the swing.",
+  });
   if (/\bcrowd\b/.test(context) && /\b(?:roar|cheer|cheering|erupts|applause)\b/.test(context)) {
-    requirements.push({ label: "the crowd roar/cheer", pattern: /\b(?:crowd|cheer|applause|stadium roar)\b/, foreground: true });
+    requirements.push({
+      label: "the crowd roar/cheer",
+      pattern: /\b(?:crowd|cheer|applause|stadium roar)\b/,
+      foreground: true,
+      fallbackSound: "A clear foreground roar and cheer from the visible crowd.",
+      fallbackVisualAction: "The established visible crowd reacts together with unmistakable cheering gestures.",
+    });
   }
   return requirements;
 }
 
 function cueMeetsRequirement(cue: TimedFoleyCue, requirement: PromptDerivedSoundRequirement): boolean {
   const sound = normalized(cue.sound);
+  const audibleCause = normalized(`${cue.sound} ${cue.visualAction}`);
   return requirement.pattern.test(sound)
-    && (!requirement.sourcePattern || requirement.sourcePattern.test(sound))
+    && (!requirement.sourcePattern || requirement.sourcePattern.test(audibleCause))
     && (!requirement.foreground || cue.prominence === "foreground")
     && (!requirement.continuous || cue.continuous);
+}
+
+type DraftFoleyCue = NonNullable<VideoPlanDraft["foleyCues"]>[number];
+
+function draftCueLexicallyMatchesRequirement(
+  cue: DraftFoleyCue,
+  requirement: PromptDerivedSoundRequirement,
+): boolean {
+  const sound = normalized(cue.sound);
+  const audibleCause = normalized(`${cue.sound} ${cue.visualAction}`);
+  return requirement.pattern.test(sound)
+    && (!requirement.sourcePattern || requirement.sourcePattern.test(audibleCause));
+}
+
+function draftCueMeetsRequirement(
+  cue: DraftFoleyCue,
+  requirement: PromptDerivedSoundRequirement,
+): boolean {
+  const prominence = cue.prominence ?? (cue.continuous ? "ambient" : "foreground");
+  return draftCueLexicallyMatchesRequirement(cue, requirement)
+    && (!requirement.foreground || prominence === "foreground")
+    && (!requirement.continuous || cue.continuous === true);
+}
+
+function beatSupportsSoundRequirement(
+  beat: VideoPlanDraft["timelineBeats"][number],
+  requirement: PromptDerivedSoundRequirement,
+): boolean {
+  const context = normalized(`${beat.visualAction} ${beat.narrativePurpose}`);
+  return requirement.pattern.test(context)
+    && (!requirement.sourcePattern || requirement.sourcePattern.test(context));
+}
+
+const LITERAL_SOUND_WORDS = /\b(?:audio|sound|noise|ambience|voice|says?|speaks?|speech|dialogue|roar|growl|bellow|snarl|bark|woof|meow|mew|hiss|cluck|crow|cry|call|footsteps?|steps?|rustle|flutter|flap|whoosh|swish|engine|motor|tire|tyre|road noise|rain|rainfall|drizzle|thunder|wind|surf|waves?|ocean|hit|impact|contact|crack|slam|collision|cheer|applause|hum|whirr|servo|clank|rattle|pass(?:es|ed|ing)? by)\b/;
+const VISUAL_ONLY_SOUND_LABEL = /\b(?:look(?:s|ed|ing)?|gaze|pose|chest\s+puff|puffs?\s+out|camera|zoom|pan|tilt|light|shadow|emotion)\b/;
+
+function isObviouslyVisualOnlyCue(cue: DraftFoleyCue): boolean {
+  const sound = normalized(cue.sound);
+  return VISUAL_ONLY_SOUND_LABEL.test(sound) && !LITERAL_SOUND_WORDS.test(sound);
+}
+
+function draftCueRetentionScore(
+  cue: DraftFoleyCue,
+  requirements: readonly PromptDerivedSoundRequirement[],
+  requestedDialogue: readonly string[],
+): number {
+  if (requirements.some((requirement) =>
+    draftCueLexicallyMatchesRequirement(cue, requirement))) return 1_000;
+  const context = normalized(`${cue.sound} ${cue.visualAction}`);
+  if (requestedDialogue.some((line) =>
+    context.includes(normalizedDialogue(line)))) return 900;
+  if (/\b(?:says?|speaks?|speech|dialogue|voice)\b/.test(context)) return 800;
+  if (cue.continuous) return 500;
+  if (LITERAL_SOUND_WORDS.test(context)) return 300;
+  return 0;
+}
+
+interface RepairedVideoPlanDraft {
+  draft: VideoPlanDraft;
+  addedFoleyCues: string[];
+  adjustedFoleyCues: string[];
+  removedFoleyCues: string[];
+}
+
+/**
+ * A model may preserve a requested sound in its script/beat yet omit the same
+ * information from the redundant cue list. Repair that transport omission
+ * deterministically instead of paying for another remote planning call. We do
+ * not invent an action the model dropped: a matching visible beat is required.
+ */
+function repairPromptSoundCues(
+  input: VideoPlanDraft,
+  materialized: VideoPlan,
+  originalPrompt: string,
+): RepairedVideoPlanDraft {
+  const requirements = promptDerivedSoundRequirements(materialized, originalPrompt);
+  const cues = [...(input.foleyCues ?? [])];
+  const addedFoleyCues: string[] = [];
+  const adjustedFoleyCues: string[] = [];
+  const removedFoleyCues: string[] = [];
+  const requestedDialogue = explicitlyRequestedDialogue(originalPrompt);
+
+  // Remove labels that describe silent visual states rather than sounds. If a
+  // label also names an audible event (for example "feather rustle while the
+  // chicken puffs") it is retained by the literal-sound check above.
+  for (let index = cues.length - 1; index >= 0; index -= 1) {
+    const cue = cues[index];
+    if (!cue || !isObviouslyVisualOnlyCue(cue)) continue;
+    cues.splice(index, 1);
+    removedFoleyCues.unshift(cue.sound);
+  }
+
+  for (const requirement of requirements) {
+    if (cues.some((cue) => draftCueMeetsRequirement(cue, requirement))) continue;
+    const beatIndex = input.timelineBeats.findIndex((beat) =>
+      beatSupportsSoundRequirement(beat, requirement));
+    if (beatIndex < 0) continue;
+
+    const existingIndex = cues.findIndex((cue) =>
+      draftCueLexicallyMatchesRequirement(cue, requirement));
+    if (existingIndex >= 0) {
+      const existing = cues[existingIndex];
+      if (!existing) continue;
+      cues[existingIndex] = {
+        ...existing,
+        beatNumber: beatIndex + 1,
+        continuous: requirement.continuous ?? existing.continuous ?? false,
+        prominence: requirement.foreground
+          ? "foreground"
+          : existing.prominence ?? (requirement.continuous ? "ambient" : "foreground"),
+        timingClass: requirement.continuous ? "approximate" : existing.timingClass ?? "must_sync",
+        visualAction: requirement.fallbackVisualAction,
+      };
+      adjustedFoleyCues.push(requirement.label);
+      continue;
+    }
+
+    if (cues.length >= 6) {
+      let victimIndex = -1;
+      let victimScore = Number.POSITIVE_INFINITY;
+      for (let index = 0; index < cues.length; index += 1) {
+        const candidate = cues[index];
+        if (!candidate) continue;
+        const score = draftCueRetentionScore(candidate, requirements, requestedDialogue);
+        if (score < victimScore) {
+          victimScore = score;
+          victimIndex = index;
+        }
+      }
+      if (victimIndex < 0 || victimScore >= 1_000) continue;
+      const [removed] = cues.splice(victimIndex, 1);
+      if (removed) removedFoleyCues.push(removed.sound);
+    }
+
+    const finalBeat = beatIndex === input.timelineBeats.length - 1;
+    const explicitlyAfter = /\b(?:immediately\s+)?after\b|\bpunchline\b|\bend\s+with\b/i
+      .test(originalPrompt);
+    if (finalBeat && explicitlyAfter) {
+      for (let index = 0; index < cues.length; index += 1) {
+        const cue = cues[index];
+        if (
+          cue
+          && cue.beatNumber === beatIndex + 1
+          && cue.placement === "end"
+          && /\b(?:says?|speaks?|speech|dialogue|voice)\b/.test(
+            normalized(`${cue.sound} ${cue.visualAction}`),
+          )
+        ) {
+          cues[index] = { ...cue, placement: "late" };
+        }
+      }
+    }
+    cues.push({
+      beatNumber: beatIndex + 1,
+      placement: requirement.continuous
+        ? "start"
+        : finalBeat && explicitlyAfter
+          ? "end"
+          : "middle",
+      sound: requirement.fallbackSound,
+      visualAction: requirement.fallbackVisualAction,
+      continuous: requirement.continuous ?? false,
+      timingClass: requirement.continuous ? "approximate" : "must_sync",
+      prominence: requirement.foreground
+        ? "foreground"
+        : requirement.continuous
+          ? "ambient"
+          : "foreground",
+    });
+    addedFoleyCues.push(requirement.label);
+  }
+
+  return {
+    draft: { ...input, foleyCues: cues },
+    addedFoleyCues,
+    adjustedFoleyCues,
+    removedFoleyCues,
+  };
+}
+
+function normalizedDialogue(value: string): string {
+  return value.normalize("NFKC")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+/** Extract only quoted text explicitly attached to a speech verb. */
+function explicitlyRequestedDialogue(originalPrompt: string): string[] {
+  const dialogue: string[] = [];
+  const pattern = /\b(?:say|says|saying|said|speak|speaks|speaking|shout|shouts|shouting|whisper|whispers|whispering|ask|asks|asking|reply|replies|replying|yell|yells|yelling)\s*[:,]?\s*["“‘']([^"”’']{1,200})["”’']/giu;
+  for (const match of originalPrompt.matchAll(pattern)) {
+    const line = match[1]?.trim();
+    if (line && !dialogue.some((candidate) => normalizedDialogue(candidate) === normalizedDialogue(line))) {
+      dialogue.push(line);
+    }
+  }
+  return dialogue;
 }
 
 function assertPlanMatchesPromptPreferences(
@@ -544,11 +823,26 @@ function assertPlanMatchesPromptPreferences(
       mismatch.push(`youtubeUpload.madeForKids must be the trusted configured value ${config.YOUTUBE_DEFAULT_MADE_FOR_KIDS}`);
     }
   }
-  const missingSounds = promptDerivedSoundRequirements(plan)
-    .filter((requirement) => !plan.foleyCues.some((cue) => cueMeetsRequirement(cue, requirement)))
-    .map(({ label }) => label);
-  if (missingSounds.length) mismatch.push(`foleyCues must include ${missingSounds.join(", ")}`);
   if (mismatch.length) throw new VideoPlanConfigurationMismatchError(mismatch.join("; "));
+}
+
+function auditPlanPromptCoverage(
+  plan: VideoPlan,
+  originalPrompt: string,
+): { missingDialogue: string[]; missingSounds: string[] } {
+  const plannedDialogue = normalizedDialogue([
+    plan.creativeScript,
+    plan.visualPrompt,
+    ...plan.timelineBeats.map(({ visualAction }) => visualAction),
+    ...plan.foleyCues.map(({ sound, visualAction }) => `${sound} ${visualAction}`),
+  ].join(" "));
+  return {
+    missingDialogue: explicitlyRequestedDialogue(originalPrompt)
+      .filter((line) => !plannedDialogue.includes(normalizedDialogue(line))),
+    missingSounds: promptDerivedSoundRequirements(plan, originalPrompt)
+      .filter((requirement) => !plan.foleyCues.some((cue) => cueMeetsRequirement(cue, requirement)))
+      .map(({ label }) => label),
+  };
 }
 
 export async function completedArtifactIsValid(
@@ -1383,6 +1677,72 @@ export function legacyAgnesVideoPrompt(plan: VideoPlan): string {
   ].join("\n");
 }
 
+/** Exact revision-3 control filter retained for accepted-task digests. */
+function isAgnesControlInstructionRevision3(fragment: string): boolean {
+  const normalized = fragment
+    .normalize('NFKC')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (normalized.includes('[[host-authorized-youtube-upload:v1]]')) return true;
+
+  const publishesToYouTube = /\b(?:upload|publish|post)\b[^\n.!?]{0,120}\b(?:you\s*tube|yt)\b/.test(normalized)
+    || /\b(?:you\s*tube|yt)\b[^\n.!?]{0,120}\b(?:upload|publish|post)\b/.test(normalized);
+  if (publishesToYouTube) return true;
+
+  const cleanup = /\b(?:clean\s*up|cleanup|delete|remove|purge)\b/.test(normalized);
+  const completionTiming = /\b(?:after|upon|once)\s+(?:successful\s+)?(?:success|completion|complete(?:d)?|finis(?:h|hed)|done)\b/.test(normalized)
+    || /\b(?:success|completion|complete(?:d)?|finis(?:h|hed)|done)\b[^\n.!?]{0,80}\b(?:clean\s*up|cleanup|delete|remove|purge)\b/.test(normalized);
+  return cleanup && completionTiming;
+}
+
+function isAgnesControlInstruction(fragment: string): boolean {
+  return isAgnesControlInstructionRevision3(fragment);
+}
+
+function stripEditorialMusicDirection(fragment: string): string {
+  const editorialMusic = /\b(?:background\s+music|soundtrack|musical\s+score)\b|\b(?:dramatic|heroic|romantic|comedic|funny|playful|soothing|tense|thrilling|horror|cinematic|orchestral|ambient)(?:\s+\w+){0,2}\s+music\b/i;
+  if (!editorialMusic.test(fragment)) return fragment;
+  // Retain our explicit prohibition and any visual action joined to an
+  // editorial score clause with "as" or "while".
+  if (/\b(?:do\s+not|don't|without|no)\b[^.!?\n]{0,80}\b(?:music|score|soundtrack)\b/i.test(fragment)) {
+    return fragment;
+  }
+  const visualRemainder = fragment.match(
+    /\b(?:music|score|soundtrack)\b[^.!?\n]{0,80}\b(?:as|while)\s+([^.!?\n]+(?:[.!?]+|$))/i,
+  )?.[1]?.trim();
+  return visualRemainder ? ` ${visualRemainder}` : "";
+}
+
+/** Remove orchestration/editorial instructions that Agnes should never act on. */
+export function sanitizeAgnesVideoPrompt(prompt: string): string {
+  const fragments = prompt.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [prompt];
+  return fragments
+    .filter((fragment) => !isAgnesControlInstruction(fragment))
+    .map(stripEditorialMusicDirection)
+    .filter(Boolean)
+    .join('')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+/**
+ * Frozen revision-3 sanitizer. Do not route this through the current
+ * sanitizer: even a well-intentioned cleanup changes the request digest of an
+ * already accepted provider task and could make resume incorrectly block or
+ * resubmit it.
+ */
+function sanitizeAgnesVideoPromptRevision3(prompt: string): string {
+  const fragments = prompt.match(/[^.!?\n]+(?:[.!?]+|$)/g) ?? [prompt];
+  return fragments
+    .filter((fragment) => !isAgnesControlInstructionRevision3(fragment))
+    .join('')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function agnesNativeSoundDirections(plan: VideoPlan): string[] {
   if (plan.foleyCues.length === 0) {
     return [
@@ -1399,11 +1759,23 @@ function agnesNativeSoundDirections(plan: VideoPlan): string[] {
   ];
 }
 
-export function agnesVideoPrompt(plan: VideoPlan): string {
-  return [
+/** Exact revision-3 provider prompt retained only for receipt verification. */
+export function agnesVideoPromptRevision3(plan: VideoPlan): string {
+  return sanitizeAgnesVideoPromptRevision3([
     legacyAgnesVideoPrompt(plan),
     ...agnesNativeSoundDirections(plan),
-  ].join("\n");
+  ].join("\n"));
+}
+
+export function agnesVideoPrompt(plan: VideoPlan, originalPrompt = ""): string {
+  const sourceIntent = originalPrompt.trim()
+    ? `Binding original user intent: ${stripYouTubeUploadAuthorization(originalPrompt)}. Preserve its explicit subjects, causal order, dialogue, and diegetic sounds; when it is too dense for ${plan.totalDurationSeconds} seconds, follow the condensed timeline below for pacing.`
+    : "";
+  return sanitizeAgnesVideoPrompt([
+    sourceIntent,
+    legacyAgnesVideoPrompt(plan),
+    ...agnesNativeSoundDirections(plan),
+  ].filter(Boolean).join("\n"));
 }
 
 /** Compatibility name retained for callers; the plan now has one continuous render. */
@@ -1467,10 +1839,23 @@ async function nonEmptyLocalFile(filePath: string): Promise<boolean> {
   }
 }
 
-function requestDigest(plan: VideoPlan): string {
+function requestDigest(plan: VideoPlan, originalPrompt: string): string {
   return createHash("sha256").update(JSON.stringify({
     model: AGNES_VIDEO_MODEL,
-    prompt: agnesVideoPrompt(plan),
+    prompt: agnesVideoPrompt(plan, originalPrompt),
+    seconds: String(plan.totalDurationSeconds),
+    mode: "text",
+    size: "720P",
+    aspect_ratio: plan.delivery.aspectRatio,
+    n: 1,
+  })).digest("hex");
+}
+
+/** Prompt revision 3: native sound blueprint, before binding source intent. */
+function priorNativeAudioRequestDigest(plan: VideoPlan): string {
+  return createHash("sha256").update(JSON.stringify({
+    model: AGNES_VIDEO_MODEL,
+    prompt: agnesVideoPromptRevision3(plan),
     seconds: String(plan.totalDurationSeconds),
     mode: "text",
     size: "720P",
@@ -1937,8 +2322,8 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
 
   const validatePlanTool = new DynamicStructuredTool({
     name: VIDEO_TOOL_NAMES.validatePlan,
-    description: "Validate and durably lock one creative continuous audiovisual plan before generation. Target 10-12 seconds unless the user explicitly requests a shorter 4-9 second result. Correct a rejected plan and call again.",
-    schema: ValidatePlanInputSchema,
+    description: "Validate a compact creative director draft and durably materialize the strict continuous audiovisual plan. Supply the plan as a real object, never a JSON string. Choose only story, continuity, two to four broad weighted beats, relative sound-cue placement, camera direction, music character, and optional YouTube copy. The host derives all IDs, exact gap-free times, canonical cue links, music windows, delivery settings, and trusted upload controls. Target 10-12 seconds unless the user explicitly requests a shorter 4-9 second result.",
+    schema: VideoPlanDraftInputSchema,
     func: async ({ plan }) => {
       const existing = await stateStore.loadPlan(originalPrompt);
       if (existing) {
@@ -1946,20 +2331,88 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         emitEvent(options.onEvent, { event: "generation_configuration", phase: "plan_reused", configuration: configuration as unknown as Record<string, unknown> });
         return json({
           status: "reused",
-          changedPlanRejected: JSON.stringify(existing) !== JSON.stringify(plan),
-          plan: existing,
+          valid: true,
+          candidateIgnored: true,
+          runId,
+          totalDurationSeconds: existing.totalDurationSeconds,
+          timelineBeatCount: existing.timelineBeats.length,
           resolvedConfiguration: configuration,
         });
       }
       let validated: VideoPlan;
       try {
-        validated = parseVideoPlanForPrompt(plan, originalPrompt);
+        validated = materializeVideoPlanDraft(plan, { originalPrompt, config });
+        const repaired = repairPromptSoundCues(plan, validated, originalPrompt);
+        if (
+          repaired.addedFoleyCues.length > 0
+          || repaired.adjustedFoleyCues.length > 0
+          || repaired.removedFoleyCues.length > 0
+        ) {
+          validated = materializeVideoPlanDraft(repaired.draft, { originalPrompt, config });
+          emitEvent(options.onEvent, {
+            event: "video_plan_normalized",
+            addedFoleyCues: repaired.addedFoleyCues,
+            adjustedFoleyCues: repaired.adjustedFoleyCues,
+            removedFoleyCues: repaired.removedFoleyCues,
+          });
+        }
+        validated = parseVideoPlanForPrompt(validated, originalPrompt);
         validateNewVideoPlanAudioChoreography(validated);
         assertPlanMatchesPromptPreferences(validated, preferences, config);
+        const coverage = auditPlanPromptCoverage(validated, originalPrompt);
+        if (coverage.missingDialogue.length > 0 || coverage.missingSounds.length > 0) {
+          emitEvent(options.onEvent, {
+            event: "video_plan_coverage_warning",
+            ...coverage,
+            originalPromptForwardedToAgnes: true,
+          });
+        }
       } catch (error) {
+        if (error instanceof VideoPlanDraftTransportError || error instanceof z.ZodError) {
+          const issues = error instanceof z.ZodError
+            ? error.issues.slice(0, 6).map((issue) => ({
+                path: issue.path.length > 0 ? issue.path.join(".") : "plan",
+                message: issue.message.slice(0, 240),
+              }))
+            : [{ path: "plan", message: error.message.slice(0, 500) }];
+          const message = issues.map(({ path: issuePath, message: issueMessage }) =>
+            `${issuePath}: ${issueMessage}`).join("; ");
+          emitEvent(options.onEvent, {
+            event: "video_plan_rejected",
+            code: "VIDEO_PLAN_DRAFT_INVALID",
+            message,
+            recoverable: true,
+          });
+          return json({
+            status: "rejected",
+            valid: false,
+            recoverable: true,
+            code: "VIDEO_PLAN_DRAFT_INVALID",
+            issues,
+            instruction: `Revise only the compact creative draft and call ${VIDEO_TOOL_NAMES.validatePlan} again. Do not send a stringified plan or any host-derived fields.`,
+          });
+        }
         const rejection = recoverableVideoPlanRejection(error, VIDEO_TOOL_NAMES.validatePlan);
-        if (rejection) return json({ ...rejection, requestedConfiguration: publicPromptPreferences(preferences) });
+        if (rejection) {
+          emitEvent(options.onEvent, {
+            event: "video_plan_rejected",
+            code: String(rejection.code ?? "VIDEO_PLAN_INVALID"),
+            message: rejection.message.slice(0, 500),
+            recoverable: true,
+          });
+          return json({
+            ...rejection,
+            message: rejection.message.slice(0, 500),
+            requestedConfiguration: publicPromptPreferences(preferences),
+          });
+        }
         if (error instanceof VideoPlanConfigurationMismatchError) {
+          emitEvent(options.onEvent, {
+            event: "video_plan_rejected",
+            code: "VIDEO_PLAN_CONFIGURATION_MISMATCH",
+            message: error.message.slice(0, 500),
+            recoverable: true,
+          });
           return json({
             status: "rejected",
             valid: false,
@@ -1977,6 +2430,7 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
       emitEvent(options.onEvent, { event: "generation_configuration", phase: "plan_locked", configuration: configuration as unknown as Record<string, unknown> });
       return json({
         status: "stored",
+        valid: true,
         runId,
         planPath: path.join(runDirectory, "plan.json"),
         totalDurationSeconds: saved.totalDurationSeconds,
@@ -2006,10 +2460,11 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
       }
       attempted.add(key);
       const plan = await requirePlan(stateStore, originalPrompt);
-      const currentDigest = requestDigest(plan);
-      const priorPromptDigest = legacyRequestDigest(plan);
+      const currentDigest = requestDigest(plan, originalPrompt);
+      const priorNativeAudioDigest = priorNativeAudioRequestDigest(plan);
+      const legacyPromptDigest = legacyRequestDigest(plan);
       let digest = currentDigest;
-      let promptRevision: 1 | typeof AGNES_PROMPT_REVISION = AGNES_PROMPT_REVISION;
+      let promptRevision: 1 | 3 | typeof AGNES_PROMPT_REVISION = AGNES_PROMPT_REVISION;
       let task: AgnesVideoTask;
 
       if (isLegacyRetryableCapacityCheckpoint(checkpoint)) {
@@ -2023,10 +2478,15 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
       }
 
       if (checkpoint?.providerJob) {
-        if (checkpoint.providerJob.requestDigest === priorPromptDigest) {
+        if (checkpoint.providerJob.requestDigest === priorNativeAudioDigest) {
+          // Revision 4 only adds the source request to new submissions. An
+          // already accepted revision-3 task remains authoritative.
+          digest = priorNativeAudioDigest;
+          promptRevision = 3;
+        } else if (checkpoint.providerJob.requestDigest === legacyPromptDigest) {
           // The prompt revision changed only after this task was accepted. Keep
           // polling the exact receipt rather than abandoning or duplicating it.
-          digest = priorPromptDigest;
+          digest = legacyPromptDigest;
           promptRevision = 1;
         } else if (checkpoint.providerJob.requestDigest !== currentDigest) {
           invocationFailure = "The accepted Agnes task does not match the locked video request.";
@@ -2089,7 +2549,7 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         });
         try {
           task = await agnes.submitVideo({
-            prompt: agnesVideoPrompt(plan),
+            prompt: agnesVideoPrompt(plan, originalPrompt),
             seconds: plan.totalDurationSeconds,
             aspectRatio: plan.delivery.aspectRatio,
             onAttempt: ({ keyLabel }) => emitEvent(options.onEvent, { event: "video_key_attempt", keyLabel }),

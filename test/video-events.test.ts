@@ -42,6 +42,7 @@ import {
   AGNES_NATIVE_AUDIO_MODEL,
   SOURCE_AUDIO_ANALYSIS_MODEL,
   agnesVideoPrompt,
+  agnesVideoPromptRevision3,
   createVideoAgentTools,
   legacyAgnesVideoPrompt,
   videoSnapshotEvent,
@@ -479,6 +480,105 @@ test("a persisted completed receipt without a cached URL is re-fetched and downl
       await readFile(path.join(runDirectory, "video", "source.mp4"), "utf8"),
       "refetched-completed-video",
     );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a revision-3 Agnes receipt with an editorial music phrase resumes without resubmission", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agnes-revision-3-prompt-resume-"));
+  const runId = new VideoRunStateStore(path.join(root, "placeholder")).promptHash(PROMPT);
+  const runDirectory = path.join(root, runId);
+  const state = new VideoRunStateStore(runDirectory);
+  let submissions = 0;
+  let polls = 0;
+
+  try {
+    const lockedPlan = plan();
+    lockedPlan.creativeScript += " Dramatic heroic music plays as the kite completes its final climb.";
+    assert.match(agnesVideoPromptRevision3(lockedPlan), /dramatic heroic music plays/i);
+    assert.doesNotMatch(agnesVideoPrompt(lockedPlan, PROMPT), /dramatic heroic music plays/i);
+    await state.ensureManifest(PROMPT);
+    await state.savePlan(PROMPT, lockedPlan);
+    const revision3Digest = createHash("sha256").update(JSON.stringify({
+      model: "agnes-video-2.5-flash",
+      prompt: agnesVideoPromptRevision3(lockedPlan),
+      seconds: "4",
+      mode: "text",
+      size: "720P",
+      aspect_ratio: "9:16",
+      n: 1,
+    })).digest("hex");
+    await state.startCheckpoint(PROMPT, videoCheckpointKeys.sourceVideo, {
+      provider: "agnes",
+      model: "agnes-video-2.5-flash",
+      details: {
+        submissionIntent: "accepted",
+        requestDigest: revision3Digest,
+        agnesPromptRevision: 3,
+      },
+    });
+    const accepted = task("in_progress", 64);
+    await state.updateProviderJobCheckpoint(PROMPT, videoCheckpointKeys.sourceVideo, {
+      providerJob: {
+        schemaVersion: 2,
+        provider: "agnes",
+        id: accepted.id,
+        videoId: accepted.video_id,
+        taskId: accepted.task_id,
+        keyFingerprint: accepted.keyFingerprint,
+        keyLabel: accepted.keyLabel,
+        model: "agnes-video-2.5-flash",
+        requestDigest: revision3Digest,
+      },
+      providerStatus: "in_progress",
+      progress: 64,
+    });
+
+    const agnes = {
+      async submitVideo() {
+        submissions += 1;
+        throw new Error("a retained revision-3 receipt must never be resubmitted");
+      },
+      async pollUntilTerminal(initial: AgnesVideoTask, options: AgnesPollOptions) {
+        polls += 1;
+        assert.equal(initial.video_id, accepted.video_id);
+        const completed = task("completed", 100);
+        await options.onPoll?.(completed);
+        return { outcome: "completed" as const, task: completed };
+      },
+      async downloadCompletedVideo(_task: AgnesVideoTask, outputPath: string) {
+        await mkdir(path.dirname(outputPath), { recursive: true });
+        const bytes = Buffer.from("revision-3-prompt-task-video");
+        await writeFile(outputPath, bytes);
+        return {
+          outputPath,
+          url: "https://media.example/revision-3-task.mp4",
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+          contentType: "video/mp4",
+        };
+      },
+    } as unknown as AgnesVideoClient;
+    const bundle = createVideoAgentTools({
+      originalPrompt: PROMPT,
+      runDirectory,
+      config: loadConfig({}),
+      stateStore: state,
+      agnes,
+      elevenLabs: {} as ElevenLabsClient,
+      freeAiMusic: {} as FreeAiMusicClient,
+    });
+
+    const result = JSON.parse(String(
+      await tool(bundle, VIDEO_TOOL_NAMES.generateVideo).invoke({}),
+    )) as Record<string, unknown>;
+    assert.equal(result.status, "completed");
+    assert.equal(submissions, 0);
+    assert.equal(polls, 1);
+    const completed = await state.loadCheckpoint(PROMPT, videoCheckpointKeys.sourceVideo);
+    assert.equal(completed?.providerJob?.requestDigest, revision3Digest);
+    assert.equal(completed?.details?.agnesPromptRevision, 3);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

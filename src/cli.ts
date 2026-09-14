@@ -16,7 +16,8 @@ import { ElevenLabsClient } from "./elevenlabs/index.js";
 import { FREE_AI_MUSIC_MODEL, FreeAiMusicClient } from "./freeai/index.js";
 import { SOURCE_AUDIO_INSPECTION_REVISION } from "./media/index.js";
 import { reconcileDueMediaCheckpoints } from "./reconcile.js";
-import { createLocalRunIndex, loadLocalRunIndex } from "./run-index.js";
+import { ensureLocalRunIndex, loadLocalRunIndex } from "./run-index.js";
+import { pauseVmBeforeExit } from "./pause.js";
 import {
   VideoRunStateStore,
   videoCheckpointKeys,
@@ -485,7 +486,7 @@ async function main(): Promise<void> {
     ? bindYouTubeUploadAuthorization(command.prompt, command.youtubeUploadRequested)
     : null;
   const localRun = command.kind === "run"
-    ? await createLocalRunIndex(outputRoot, boundRunPrompt as string)
+    ? await ensureLocalRunIndex(outputRoot, boundRunPrompt as string)
     : await loadLocalRunIndex(outputRoot, command.runId);
   const originalPrompt = boundRunPrompt ?? localRun.originalPrompt;
   const runDirectory = localRun.runDirectory;
@@ -496,7 +497,9 @@ async function main(): Promise<void> {
     return;
   }
 
-  console.log(`${command.kind === "resume" ? "Resuming" : "Started"} run: ${localRun.runId}`);
+  // Check if this is a resumed run (createdAt != updatedAt and not a --resume command)
+  const isResumedRun = command.kind === "run" && localRun.createdAt !== localRun.updatedAt;
+  console.log(`${command.kind === "resume" || isResumedRun ? "Resuming" : "Started"} run: ${localRun.runId}`);
 
   let manifest = await state.ensureManifest(originalPrompt);
     const promptPreferences = resolvePromptPreferencesForConfig(originalPrompt, config);
@@ -552,7 +555,10 @@ async function main(): Promise<void> {
         && youtubeCheckpoint?.status !== "completed"
         && config.YOUTUBE_UPLOAD_ENABLED;
       if (!uploadStillNeeded) {
-        console.log(`Final video already completed: ${completedAssembly.path}`);
+        if (isResumedRun) {
+          console.log(`Task already complete. Reusing artifacts from previous run.`);
+        }
+        console.log(`Final video: ${completedAssembly.path}`);
         if (manifest.youtubeUploadRequested && youtubeCheckpoint?.status !== "completed") {
           console.log("YouTube upload remains pending: enable and configure YouTube OAuth, then resume.");
         }
@@ -690,12 +696,7 @@ async function main(): Promise<void> {
       },
       frameworkOptions: { recursionLimit: 150 },
       additionalSystemRules: [
-        `Immediately after write_todos, call ${VIDEO_TOOL_NAMES.status} and reuse every completed checkpoint.`,
         `Trusted prompt-derived preferences: ${JSON.stringify(promptPreferences)}.`,
-        "Create one coherent story with setup, development, and payoff. Unless the user explicitly asks for 4-9 seconds, target 10-12 seconds and extend only the same narrative context with purposeful anticipation, development, reaction, or aftermath. Use one Agnes render, not multiple scenes or clips.",
-        `Agnes is asynchronous. Submit once, durably retain video_id/task_id/key identity, and poll every 30 seconds for at most eight minutes. A pending result ends the invocation; resume this exact task with npm run dev -- --resume ${localRun.runId}.`,
-        "Prompt Agnes with the natural diegetic sounds implied by every visible subject, action, and environment, synchronized inside broad achievable timing windows. After download, inspect the embedded Agnes audio first. If it contains a meaningful signal, preserve it as foreground audio and do not call vision or ElevenLabs. Only when it has no usable audio may the Foley tool inspect timestamped frames, retime supported causes, omit absent events, and generate ElevenLabs fallback effects.",
-        "Attempt an intentionally quiet, sparse Free.ai ACE-Step instrumental bed unless music was explicitly disabled. Treat BPM as the perceived pulse, never double-time; the selected foreground audio owns all transient accents. If all bounded music attempts fail, immediately assemble with the selected Agnes-native or ElevenLabs foreground audio only. Do not use generic image, TTS, or audio tools.",
         "Never read, list, quote, or expose environment files, credentials, API keys, signed media URLs, or key fingerprints.",
         `For requested YouTube uploads, youtubeUpload.privacyStatus must be ${config.YOUTUBE_DEFAULT_PRIVACY} and youtubeUpload.madeForKids must be ${config.YOUTUBE_DEFAULT_MADE_FOR_KIDS}; generate the title, description, tags, and category from the video. Upload only when the authorized tool is present.`,
       ].join("\n"),
@@ -758,8 +759,23 @@ async function main(): Promise<void> {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
+  let pausePromise: Promise<void> | undefined;
+  const pauseOnce = (): Promise<void> => {
+    pausePromise ??= pauseVmBeforeExit();
+    return pausePromise;
+  };
+  const handleTerminationSignal = (signal: NodeJS.Signals): void => {
+    const exitCode = signal === "SIGINT" ? 130 : 143;
+    void pauseOnce().finally(() => process.exit(exitCode));
+  };
+
+  process.once("SIGINT", handleTerminationSignal);
+  process.once("SIGTERM", handleTerminationSignal);
+
   main().catch((error) => {
     console.error(`Video agent failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
+  }).finally(async () => {
+    await pauseOnce();
   });
 }

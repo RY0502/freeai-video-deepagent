@@ -7,41 +7,40 @@ import { hashUserPrompt } from "freetier-deepagent-framework";
 import { createLocalRunIndex, loadLocalRunIndex } from "../src/run-index.js";
 import { LocalFrameworkDatabase, VideoRunStateStore } from "../src/state/index.js";
 
-test("simultaneous identical prompts create isolated resumable run IDs", async () => {
+test("sequential identical prompts reuse one single-writer resumable run", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "video-agent-run-"));
   const prompt = "A cat drives a tiny car";
   try {
-    const runs = await Promise.all(Array.from(
-      { length: 8 },
-      async () => await createLocalRunIndex(root, prompt),
-    ));
-    assert.equal(new Set(runs.map(({ runId }) => runId)).size, runs.length);
-    assert.equal(new Set(runs.map(({ runDirectory }) => runDirectory)).size, runs.length);
+    const runs = [];
+    for (let invocation = 0; invocation < 8; invocation += 1) {
+      runs.push(await createLocalRunIndex(root, prompt));
+    }
+    assert.equal(new Set(runs.map(({ runId }) => runId)).size, 1);
+    assert.equal(new Set(runs.map(({ runDirectory }) => runDirectory)).size, 1);
     assert.deepEqual(new Set(runs.map(({ promptHash }) => promptHash)), new Set([
       hashUserPrompt(prompt),
     ]));
 
-    for (const created of runs) {
-      const loaded = await loadLocalRunIndex(root, created.runId);
-      assert.deepEqual(loaded, created);
-      const state = new VideoRunStateStore(created.runDirectory);
-      const manifest = await state.ensureManifest(prompt);
-      assert.equal(manifest.promptHash, created.promptHash);
-      assert.equal(state.runId(prompt), created.runId);
-      await assert.rejects(access(path.join(created.runDirectory, ".run.lock")), /ENOENT/);
-    }
+    const current = runs.at(-1)!;
+    const loaded = await loadLocalRunIndex(root, current.runId);
+    assert.deepEqual(loaded, current);
+    const state = new VideoRunStateStore(current.runDirectory);
+    const manifest = await state.ensureManifest(prompt);
+    assert.equal(manifest.promptHash, current.promptHash);
+    assert.equal(state.runId(prompt), current.runId);
+    await assert.rejects(access(path.join(current.runDirectory, ".run.lock")), /ENOENT/);
 
     const frameworkDatabase = new LocalFrameworkDatabase(
-      runs[0]!.runDirectory,
-      runs[0]!.promptHash,
+      current.runDirectory,
+      current.promptHash,
     );
     const frameworkRun = await frameworkDatabase.createRun(
-      runs[0]!.promptHash,
+      current.promptHash,
       prompt,
-      "isolated-thread",
+      "single-writer-thread",
       "nvidia",
     );
-    assert.equal(frameworkRun.prompt_hash, runs[0]!.promptHash);
+    assert.equal(frameworkRun.prompt_hash, current.promptHash);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
