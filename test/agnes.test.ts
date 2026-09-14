@@ -241,7 +241,7 @@ test("does not rotate authentication, validation, network, 5xx, or ambiguous suc
     {
       expectedKind: "provider",
       expectedAmbiguous: true,
-      response: () => jsonResponse({ code: "queue_full", message: "Video queue is full" }, 503),
+      response: () => jsonResponse({ code: "server_error", message: "Internal server error" }, 503),
     },
     {
       expectedKind: "ambiguous_submission",
@@ -285,10 +285,10 @@ test("treats an explicit queue-full response without a task ID as a safe later r
     fetch: async () => {
       calls += 1;
       return jsonResponse({
-        code: "queue_full",
-        error: "video queue is full, please retry later",
+        code: "video_queue_full",
+        message: "video queue is full, please retry later (request id: 20260914131333543539462pcNHGNnp)",
         retry_after: 30,
-      });
+      }, 503);
     },
   });
 
@@ -319,9 +319,9 @@ test("retries queue-full response twice with 30s interval and succeeds on attemp
       calls += 1;
       if (calls <= 2) {
         return jsonResponse({
-          code: "queue_full",
-          error: "video queue is full, please retry later (request id: 20260914085033376830736E8tAU3yO)",
-        });
+          code: "video_queue_full",
+          message: "video queue is full, please retry later (request id: 20260914085033376830736E8tAU3yO)",
+        }, 503);
       }
       return jsonResponse({
         video_id: "vid-recovered",

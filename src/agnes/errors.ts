@@ -193,6 +193,10 @@ function isQuotaExhausted(text: string): boolean {
  * and a later invocation may safely submit the locked request again.
  */
 export function isAgnesProviderCapacityRejection(payload: unknown): boolean {
+  const code = providerCode(payload);
+  if (code === "video_queue_full" || code === "queue_full") {
+    return true;
+  }
   const text = normalizedDiagnostics(payload);
   return /\b(?:(?:video(?: generation)?|render|request)\s+)?queue\s+(?:is\s+)?(?:full|at capacity)\b/.test(text)
     || /\b(?:(?:video(?: generation)?|render|request)\s+)?queue\s+(?:has\s+)?(?:reached|exceeded)\s+(?:its\s+)?capacity\b/.test(text);
@@ -225,24 +229,23 @@ export function classifyAgnesError(
     ...(options.keys === undefined ? {} : { keys: options.keys }),
   };
 
-  // Server and credential failures are never rotation signals, even if their
-  // untrusted prose happens to contain words such as "quota" or "rate".
+  if (status === 401 || status === 403) {
+    return new AgnesError(message, { ...base, kind: "authentication" });
+  }
+  // A queue-capacity response explicitly says that no render was accepted.
+  // Check it before generic 5xx (Agnes returns HTTP 503 for queue-full) and HTTP 429
+  // so it neither rotates keys nor treats a rejected submission as ambiguous.
+  if (isAgnesProviderCapacityRejection(payload)) {
+    return new AgnesError(message, { ...base, kind: "provider_capacity" });
+  }
+  // Server failures without an explicit non-acceptance response are treated as ambiguous
+  // to avoid unintended duplicate submits.
   if (status >= 500) {
     return new AgnesError(message, {
       ...base,
       kind: "provider",
       ambiguousOutcome: true,
     });
-  }
-  if (status === 401 || status === 403) {
-    return new AgnesError(message, { ...base, kind: "authentication" });
-  }
-  // A queue-capacity response explicitly says that no render was accepted.
-  // Check it before generic HTTP 429 and the ambiguous-success fallback so it
-  // neither rotates keys nor blocks reruns. Authentication and 5xx status
-  // remain authoritative regardless of untrusted response prose.
-  if (isAgnesProviderCapacityRejection(payload)) {
-    return new AgnesError(message, { ...base, kind: "provider_capacity" });
   }
   if (status === 429) {
     return new AgnesError(message, { ...base, kind: "rate_limit" });

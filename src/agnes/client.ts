@@ -568,7 +568,7 @@ export class AgnesVideoClient {
 
         if (isCapacity && capacityAttempts < maxCapacityRetries) {
           capacityAttempts += 1;
-          const agnesError = error instanceof AgnesError
+          const agnesError = (error instanceof AgnesError && error.kind === "provider_capacity")
             ? error
             : new AgnesError(error instanceof Error ? error.message : String(error), {
                 kind: "provider_capacity",

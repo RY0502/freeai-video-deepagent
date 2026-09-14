@@ -1478,6 +1478,40 @@ export async function cleanupValidatedRunArtifacts(options: {
   }
 }
 
+export async function cleanupCompletedUploadRun(options: {
+  runDirectory: string;
+  originalCwd?: string;
+}): Promise<CleanupValidatedRunArtifactsResult> {
+  const resolvedRunDirectory = path.resolve(options.runDirectory);
+  if (options.originalCwd && path.resolve(process.cwd()) === resolvedRunDirectory) {
+    try {
+      process.chdir(options.originalCwd);
+    } catch {
+      process.chdir(path.dirname(resolvedRunDirectory));
+    }
+  } else if (path.resolve(process.cwd()) === resolvedRunDirectory) {
+    process.chdir(path.dirname(resolvedRunDirectory));
+  }
+  try {
+    await rm(resolvedRunDirectory, { recursive: true, force: true });
+    return {
+      requested: true,
+      performed: true,
+      retention: "removed",
+      reason: "Run cleaned up completely after successful YouTube upload.",
+    };
+  } catch (error) {
+    const warning = error instanceof Error ? error.message : String(error);
+    return {
+      requested: true,
+      performed: false,
+      retention: "partial_or_unknown",
+      reason: `Complete cleanup after YouTube upload started but did not complete: ${warning}`,
+      warning,
+    };
+  }
+}
+
 export interface RecoveredLocalAssembly {
   checkpoint: ArtifactCheckpoint;
   source: "prompt_output" | "staging_output" | "legacy_output";

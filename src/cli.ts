@@ -26,6 +26,7 @@ import {
 } from "./state/index.js";
 import {
   VIDEO_TOOL_NAMES,
+  cleanupCompletedUploadRun,
   cleanupValidatedRunArtifacts,
   completedArtifactIsValid,
   createUploadAuthorizationToken,
@@ -60,6 +61,31 @@ function requireTool(bundle: VideoToolBundle, name: string): DynamicStructuredTo
 
 function logVideoAgentEvent(event: VideoAgentEvent): void {
   console.log(`[video-agent] ${JSON.stringify(event)}`);
+}
+
+async function cleanupRunIfYouTubeUploadCompleted(options: {
+  state: VideoRunStateStore;
+  originalPrompt: string;
+  runDirectory: string;
+  originalCwd: string;
+}): Promise<boolean> {
+  const youtube = await options.state.loadCheckpoint(options.originalPrompt, videoCheckpointKeys.youtubeUpload);
+  if (youtube?.status === "completed" && youtube.externalId) {
+    const cleanup = await cleanupCompletedUploadRun({
+      runDirectory: options.runDirectory,
+      originalCwd: options.originalCwd,
+    });
+    logVideoAgentEvent({
+      event: "artifact_cleanup",
+      requested: true,
+      performed: cleanup.performed,
+      retention: cleanup.retention,
+      reason: cleanup.reason,
+    });
+    console.log("YouTube upload succeeded; cleaned up run completely (video, state, and details).");
+    return true;
+  }
+  return false;
 }
 
 /** Secret-safe checkpoint view for terminal status output. */
@@ -475,6 +501,7 @@ async function assembleCompletedVideoIfReady(options: {
 }
 
 async function main(): Promise<void> {
+  const initialCwd = process.cwd();
   const command = parseCliArgs(process.argv.slice(2));
   if (command.kind === "help") {
     console.log(CLI_HELP);
@@ -564,6 +591,7 @@ async function main(): Promise<void> {
           console.log("YouTube upload remains pending: enable and configure YouTube OAuth, then resume.");
         }
         await printStatus(state, originalPrompt, runDirectory, config);
+        await cleanupRunIfYouTubeUploadCompleted({ state, originalPrompt, runDirectory, originalCwd: initialCwd });
         return;
       }
     }
@@ -613,6 +641,7 @@ async function main(): Promise<void> {
     })) {
       console.log("YouTube upload completed or reused from its durable receipt.");
       await printStatus(state, originalPrompt, runDirectory, config);
+      await cleanupRunIfYouTubeUploadCompleted({ state, originalPrompt, runDirectory, originalCwd: initialCwd });
       return;
     }
     const reconciliation = await reconcileDueMediaCheckpoints({
@@ -660,6 +689,7 @@ async function main(): Promise<void> {
         if (uploaded) console.log("YouTube upload completed or reused from its durable receipt.");
       }
       await printStatus(state, originalPrompt, runDirectory, config);
+      await cleanupRunIfYouTubeUploadCompleted({ state, originalPrompt, runDirectory, originalCwd: initialCwd });
       return;
     }
 
@@ -759,6 +789,7 @@ async function main(): Promise<void> {
       console.log("YouTube upload completed or reused from its durable receipt.");
     }
     await printStatus(state, originalPrompt, runDirectory, config);
+    await cleanupRunIfYouTubeUploadCompleted({ state, originalPrompt, runDirectory, originalCwd: initialCwd });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {

@@ -17,6 +17,7 @@ import {
 } from "../src/state/index.js";
 import {
   AGNES_NATIVE_AUDIO_MODEL,
+  cleanupCompletedUploadRun,
   cleanupValidatedRunArtifacts,
   recoverInterruptedLocalAssembly,
   resetInterruptedFoleyAggregation,
@@ -719,6 +720,30 @@ test("cleanup retains artifacts by default and removes them only through the exp
       (await state.listCheckpoints(prompt)).map(({ key }) => key),
       [videoCheckpointKeys.assembly],
     );
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+test("cleanupCompletedUploadRun completely cleans up run directory including video, state, and details", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "video-upload-cleanup-"));
+  try {
+    const runDirectory = path.join(temporaryRoot, "test-run-123");
+    await mkdir(path.join(runDirectory, "video"), { recursive: true });
+    await mkdir(path.join(runDirectory, "audio"), { recursive: true });
+    await mkdir(path.join(runDirectory, "analysis"), { recursive: true });
+    await writeFile(path.join(runDirectory, "video", "source.mp4"), "source");
+    await writeFile(path.join(runDirectory, "audio", "music.wav"), "music");
+    await writeFile(path.join(runDirectory, "final-1.mp4"), "final");
+    await writeFile(path.join(runDirectory, "pipeline-state.json"), "{}");
+    await writeFile(path.join(runDirectory, "plan.json"), "{}");
+    await writeFile(path.join(runDirectory, "run.json"), "{}");
+
+    const result = await cleanupCompletedUploadRun({ runDirectory });
+    assert.equal(result.performed, true);
+    assert.equal(result.retention, "removed");
+    assert.equal(result.requested, true);
+    await assert.rejects(access(runDirectory), { code: "ENOENT" });
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }
