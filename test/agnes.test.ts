@@ -274,12 +274,14 @@ test("does not rotate authentication, validation, network, 5xx, or ambiguous suc
   }
 });
 
-test("treats an explicit queue-full response without a task ID as a safe later resubmission", async () => {
+test("treats an explicit queue-full response without a task ID as a safe later resubmission after retrying twice", async () => {
   assert.equal(isAgnesProviderCapacityRejection("video queue is full, please retry later"), true);
   assert.equal(isAgnesProviderCapacityRejection("temporarily unavailable, please retry later"), false);
   let calls = 0;
+  const delays: number[] = [];
   const client = new AgnesVideoClient({
     apiKeys: ["first-secret", "second-secret"],
+    sleep: async (ms) => { delays.push(ms); },
     fetch: async () => {
       calls += 1;
       return jsonResponse({
@@ -299,6 +301,112 @@ test("treats an explicit queue-full response without a task ID as a safe later r
       assert.equal(error.mayTryAnotherKey, false);
       assert.equal(error.rotationExhausted, false);
       assert.equal(error.retryAfterMs, 30_000);
+      return true;
+    },
+  );
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [30_000, 30_000]);
+});
+
+test("retries queue-full response twice with 30s interval and succeeds on attempt 3", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const retryEvents: unknown[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["first-secret"],
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async () => {
+      calls += 1;
+      if (calls <= 2) {
+        return jsonResponse({
+          code: "queue_full",
+          error: "video queue is full, please retry later (request id: 20260914085033376830736E8tAU3yO)",
+        });
+      }
+      return jsonResponse({
+        video_id: "vid-recovered",
+        task_id: "task-recovered",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "A drone shot over rolling green hills",
+    seconds: 8,
+    aspectRatio: "16:9",
+    onCapacityRetry: (event) => retryEvents.push({
+      attempt: event.attempt,
+      maxRetries: event.maxRetries,
+      delayMs: event.delayMs,
+    }),
+  });
+
+  assert.equal(calls, 3);
+  assert.equal(task.video_id, "vid-recovered");
+  assert.deepEqual(delays, [30_000, 30_000]);
+  assert.deepEqual(retryEvents, [
+    { attempt: 1, maxRetries: 2, delayMs: 30_000 },
+    { attempt: 2, maxRetries: 2, delayMs: 30_000 },
+  ]);
+});
+
+test("retries queue-full response and succeeds on attempt 2 after 30s delay", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["first-secret"],
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          code: "queue_full",
+          error: "video queue is full, please retry later",
+        });
+      }
+      return jsonResponse({
+        video_id: "vid-attempt-2",
+        task_id: "task-attempt-2",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "Sunset over mountain peaks",
+    seconds: 6,
+    aspectRatio: "16:9",
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(task.video_id, "vid-attempt-2");
+  assert.deepEqual(delays, [30_000]);
+});
+
+test("does not retry queue full when capacityMaxRetries is 0", async () => {
+  let calls = 0;
+  const client = new AgnesVideoClient({
+    apiKeys: ["first-secret"],
+    capacityMaxRetries: 0,
+    fetch: async () => {
+      calls += 1;
+      return jsonResponse({
+        code: "queue_full",
+        error: "video queue is full, please retry later",
+      });
+    },
+  });
+
+  await assert.rejects(
+    client.submitVideo({ prompt: "A snowy forest path", seconds: 5, aspectRatio: "16:9" }),
+    (error: unknown) => {
+      assert.ok(error instanceof AgnesError);
+      assert.equal(error.kind, "provider_capacity");
       return true;
     },
   );

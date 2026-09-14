@@ -224,6 +224,7 @@ export type VideoAgentEvent =
   | { event: "video_plan_rejected"; code: string; message: string; recoverable: boolean }
   | { event: "video_submission_started"; model: typeof AGNES_VIDEO_MODEL; attemptNumber: number; resubmission: boolean; durationSeconds: number; aspectRatio: string; requestTimeoutMs: number; pollIntervalMs: number; pollWindowMs: number; controls: VideoPromptControls }
   | { event: "video_key_attempt"; keyLabel: string }
+  | { event: "video_capacity_retry"; attempt: number; maxRetries: number; delayMs: number }
   | { event: "video_task_submitted"; videoId: string; taskId: string; status: AgnesTaskStatus; progress: number; keyLabel: string }
   | { event: "video_poll_result"; videoId: string; pollNumber: number; status: AgnesTaskStatus; progress: number; elapsedMs: number; downloadReady?: boolean }
   | { event: "video_poll_error"; videoId: string; pollNumber: number; reason: string; elapsedMs: number }
@@ -2553,6 +2554,14 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             seconds: plan.totalDurationSeconds,
             aspectRatio: plan.delivery.aspectRatio,
             onAttempt: ({ keyLabel }) => emitEvent(options.onEvent, { event: "video_key_attempt", keyLabel }),
+            onCapacityRetry: ({ attempt, maxRetries, delayMs }) => {
+              emitEvent(options.onEvent, {
+                event: "video_capacity_retry",
+                attempt,
+                maxRetries,
+                delayMs,
+              });
+            },
           });
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

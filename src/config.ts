@@ -11,6 +11,8 @@ const envSchema = z.object({
   AGNES_POLL_INTERVAL_MS: z.coerce.number().int().min(1_000).default(30_000),
   AGNES_POLL_WINDOW_MS: z.coerce.number().int().min(1_000).default(480_000),
   AGNES_MAX_DOWNLOAD_BYTES: z.coerce.number().int().min(1_000_000).default(500_000_000),
+  AGNES_CAPACITY_MAX_RETRIES: z.coerce.number().int().min(0).default(2),
+  AGNES_CAPACITY_RETRY_INTERVAL_MS: z.coerce.number().int().min(0).default(30_000),
   FREE_AI_BASE_URL: z.string().url().default("https://api.free.ai"),
   FREE_AI_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).default(180_000),
   FREE_AI_RETRY_DELAY_MS: z.coerce.number().int().min(0).default(6_000),
