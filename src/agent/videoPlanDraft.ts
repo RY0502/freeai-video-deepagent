@@ -615,7 +615,13 @@ export function materializeVideoPlanDraft(
     ),
     negativeConstraints: requiredList(
       draft.continuityBible.negativeConstraints,
-      ['no identity drift', 'no duplicate subjects', 'no visible text or watermark'],
+      [
+        'no identity drift',
+        'no duplicate subjects',
+        'no visible text or watermark',
+        'no human presenter, spokesperson, or talking head popping into frame',
+        'no product feature presentation, commercial advertisement, or promotional pitch',
+      ],
       3,
       20,
     ),

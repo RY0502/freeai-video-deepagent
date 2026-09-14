@@ -39,7 +39,7 @@ Planning rules:
 - Keep at most 6 cues: normally one continuous ambience plus the few foreground events that matter. Explicitly requested vocalizations, impacts, dialogue, and punchline sounds outrank footsteps, cloth, and ambience. For a requested animal sound, name the animal and vocalization in sound and describe its visible mouth/beak action in visualAction.
 - Give every cue its one-based beatNumber and coarse placement. Use must_sync for an important transient and approximate for continuous/supporting sound. At most one must_sync cue per beat; another sound in that beat may be approximate. Do not invent IDs or absolute timestamps.
 - Music is enabled unless the user explicitly asks for no background music. Preserve explicit genre/BPM/instrument/mood; otherwise choose context-appropriate restrained instrumental music. Do not place Foley, speech, lyrics, or literal story sounds in music.
-- Use supported camera values from the schema. Keep identity, wardrobe/surface, props, location geometry, lighting, and palette stable; include concise negative constraints against identity drift, duplicates, malformed subjects, blur, text, logos, and watermarks.
+- Use supported camera values from the schema. Keep identity, wardrobe/surface, props, location geometry, lighting, and palette stable; include concise negative constraints against identity drift, duplicates, malformed subjects, blur, text, logos, watermarks, human presenters, talking heads, spokespersons, product features, and commercial promotions.
 - Supply a real object, not stringified JSON. Do not include schemaVersion, IDs, exact timestamps, dimensions/codecs, music windows, trusted upload controls, or other host-derived fields.
 
 ${youtubeRule}
@@ -118,7 +118,7 @@ For cricket, for example, the bat-contact crack belongs at the exact contact tim
 - Supported aspect ratios are \`21:9\`, \`16:9\`, \`4:3\`, \`1:1\`, \`3:4\`, and \`9:16\`; exact user choices win, otherwise use trusted defaults. Agnes Flash is fixed at 720P tier.
 - Supported visual-style vocabulary is \`cinematic\`, \`animation\`, \`realistic\`, \`artistic\`, \`vintage\`, \`anime\`, \`film-noir\`, \`documentary\`, \`commercial\`, and \`music-video\`.
 - Select one canonical camera motion: \`static\`, \`slow pan left\`, \`slow pan right\`, \`slow tilt up\`, \`slow tilt down\`, \`slow zoom in\`, \`slow zoom out\`, \`slow orbit around\`, \`handheld shaky\`, \`dolly forward\`, or \`crane up\`. Preserve an explicit user choice; otherwise choose deliberately and describe the full choreography in \`cameraDirection\` and each beat.
-- Preserve a clearly labeled user negative prompt in the continuity bible. Otherwise author a concise negative bible covering blur/low quality, malformed or duplicate subjects, identity drift, unwanted text/logos/watermarks, and story-specific failures.
+- Preserve a clearly labeled user negative prompt in the continuity bible. Otherwise author a concise negative bible covering blur/low quality, malformed or duplicate subjects, identity drift, unwanted text/logos/watermarks, human presenters or talking heads, commercial/product pitches, and story-specific failures.
 - Agnes has no separate style, camera-motion, or negative-prompt fields. The video tool composes those controls into the single ordinary prompt; never invent unsupported API fields.
 
 ## Required execution boundary

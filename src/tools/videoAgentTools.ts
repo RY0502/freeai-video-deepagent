@@ -1672,8 +1672,8 @@ export function legacyAgnesVideoPrompt(plan: VideoPlan): string {
     ),
     "The bracketed cue times already embedded in those beat directions mark intended visual peaks. Do not add extra actions or repeat the cue list; prioritize simple, sequential, physically readable choreography.",
     `Supporting anchors: ${bible.supportingAnchors.join("; ")}.`,
-    `Avoid: ${[plan.negativePrompt, ...bible.negativeConstraints].join("; ")}.`,
-    "No cuts to unrelated scenes, no montage, no captions, and no visible text unless explicitly required by the concept.",
+    `Avoid: ${[plan.negativePrompt, ...bible.negativeConstraints, "human presenter, spokesperson, talking head, corporate speaker, product demonstration, key features presentation, commercial advertisement, promotional pitch, sponsor overlay"].join("; ")}.`,
+    "No cuts to unrelated scenes, no montage, no captions, no visible text unless explicitly required by the concept, and absolutely no human presenters, spokespersons, talking heads popping into frame, product demonstrations, feature lists, commercial ads, or sales pitches.",
   ].join("\n");
 }
 
@@ -1755,7 +1755,7 @@ function agnesNativeSoundDirections(plan: VideoPlan): string[] {
     ...plan.foleyCues.map((cue) => cue.continuous
       ? `- From ${cue.atSeconds.toFixed(2)}s for ${cue.durationSeconds.toFixed(2)}s: ${cue.sound}. Visible source: ${cue.visualAction}.`
       : `- Near ${cue.atSeconds.toFixed(2)}s: ${cue.sound}, synchronized with this visible cause: ${cue.visualAction}.`),
-    "Generate only those visible-source action sounds and restrained natural ambience. Do not generate background music, score, songs, lyrics, narration, dialogue not requested by the user, or unrelated off-screen effects.",
+    "Generate only those visible-source action sounds and restrained natural ambience. Do not generate background music, score, songs, lyrics, narration, dialogue not requested by the user, commercial speech, product feature explanations, or unrelated off-screen effects.",
   ];
 }
 

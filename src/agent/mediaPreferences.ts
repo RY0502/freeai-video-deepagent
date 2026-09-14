@@ -64,7 +64,7 @@ export const DOCUMENTED_CAMERA_MOTION_SUGGESTIONS = [
 
 /** Conservative starting point when the user did not supply exclusions. */
 export const DOCUMENTED_NEGATIVE_PROMPT_SUGGESTION =
-  'blurry, low quality, distorted, extra fingers, watermark, text overlay, logo';
+  'blurry, low quality, distorted, extra fingers, watermark, text overlay, logo, human presenter, talking head, spokesperson, product demonstration, key features presentation, commercial advertisement, promotional pitch';
 
 /** Non-exhaustive genre vocabulary suitable for Free.ai ACE-Step prompts. */
 export const DOCUMENTED_MUSIC_GENRE_SUGGESTIONS = [
