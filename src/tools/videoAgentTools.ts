@@ -964,8 +964,13 @@ export function finalAudioMixRevisionIsCurrent(
     : (musicDependencyStatus === "skipped" || musicDependencyStatus === "disabled")
       && (musicSha256 === null || musicSha256 === undefined)
       && checkpoint?.details?.backgroundMusicIncluded === false
-      && checkpoint.details?.backgroundMusicRequested === (musicDependencyStatus === "skipped")
-      && checkpoint.details?.foleyOnlyFallback === (musicDependencyStatus === "skipped");
+      && (
+        musicDependencyStatus === "disabled"
+        || (
+          checkpoint.details?.backgroundMusicRequested === true
+          && checkpoint.details?.foleyOnlyFallback === true
+        )
+      );
   const foregroundAudioMode = checkpoint?.details?.foregroundAudioMode;
   const foregroundReceiptIsCurrent = foregroundAudioMode === "agnes_native"
     ? checkpoint?.details?.foleySha256 === null
@@ -1280,7 +1285,12 @@ async function resolveCurrentFinalDependencies(
       musicSha256: null,
     };
   }
-  return null;
+  // Free.ai background music generation commented out for now; proceed directly to assembly:
+  return {
+    ...foregroundBinding.dependencies,
+    musicDependencyStatus: "disabled",
+    musicSha256: null,
+  };
 }
 
 export async function validateCompletedFinalVideoCheckpoint(
@@ -3443,6 +3453,17 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
       }
       return await completeMusic(generated);
       */
+      await stateStore.skipCheckpoint(
+        originalPrompt,
+        key,
+        "Background music generation via Free.ai API call is commented out for now.",
+        {
+          backgroundMusicRequested: true,
+          foleyOnlyFallback: true,
+          failureSource: "provider",
+          optionalArtifactOmitted: true,
+        },
+      ).catch(() => undefined);
       return json({
         status: "skipped",
         reason: "Background music generation via Free.ai API call is commented out for now.",
@@ -3515,6 +3536,9 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             : "disabled",
         musicSha256: musicAvailable ? music?.sha256 as string : null,
       };
+      const effectiveMusicRequested = dependencies.musicDependencyStatus === "included"
+        || dependencies.musicDependencyStatus === "skipped";
+      const effectiveMusicOmitted = dependencies.musicDependencyStatus === "skipped";
       const recovered = await recoverInterruptedLocalAssembly({
         stateStore,
         originalPrompt,
@@ -3558,17 +3582,17 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         model: "ffmpeg-static",
         details: {
           totalDurationSeconds: plan.totalDurationSeconds,
-          backgroundMusicRequested: musicRequested,
+          backgroundMusicRequested: effectiveMusicRequested,
           backgroundMusicIncluded: musicAvailable,
-          foleyOnlyFallback: musicOmitted,
-          diegeticOnlyFallback: musicOmitted,
+          foleyOnlyFallback: effectiveMusicOmitted,
+          diegeticOnlyFallback: effectiveMusicOmitted,
           audioMixRevision: AUDIO_MIX_REVISION,
           ...finalDependencyDetails(dependencies),
           musicVolume: config.VIDEO_MUSIC_VOLUME,
           foleyVolume: config.VIDEO_FOLEY_VOLUME,
           backgroundMusicMix: BACKGROUND_MUSIC_MIX,
           processTimeoutMs: DEFAULT_MEDIA_PROCESS_TIMEOUT_MS,
-          ...(musicOmitted && music?.error ? { backgroundMusicOmissionReason: music.error } : {}),
+          ...(effectiveMusicOmitted && music?.error ? { backgroundMusicOmissionReason: music.error } : {}),
         },
       });
       await stateStore.updateStatus(originalPrompt, "assembling");
@@ -3624,10 +3648,10 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
           model: "ffmpeg-static",
           details: {
             ...result,
-            backgroundMusicRequested: musicRequested,
+            backgroundMusicRequested: effectiveMusicRequested,
             backgroundMusicIncluded: musicAvailable,
-            foleyOnlyFallback: musicOmitted,
-            diegeticOnlyFallback: musicOmitted,
+            foleyOnlyFallback: effectiveMusicOmitted,
+            diegeticOnlyFallback: effectiveMusicOmitted,
             audioMixRevision: AUDIO_MIX_REVISION,
             ...finalDependencyDetails(dependencies),
             musicVolume: config.VIDEO_MUSIC_VOLUME,

@@ -374,7 +374,9 @@ export function enabledMusicForPlan(plan: VideoPlan): EnabledMusicPlan | null {
 }
 
 export function planUsesBackgroundMusic(plan: VideoPlan): boolean {
-  return enabledMusicForPlan(plan) !== null;
+  // Free.ai background music generation commented out for now; proceed directly to assembly:
+  return false;
+  // return enabledMusicForPlan(plan) !== null;
 }
 
 export class VideoPlanPromptMismatchError extends Error {

@@ -15,7 +15,11 @@ import {
 } from './deepAgentCompatibility.js';
 import { scopeFrameworkFilesystemToRunDirectory } from './scopedFilesystemBackend.js';
 import { createVideoPlanningSystemPrompt } from './systemPrompt.js';
-import { promptExplicitlyRequestsYouTubeUpload, type VideoPlan } from './videoPlan.js';
+import {
+  planUsesBackgroundMusic,
+  promptExplicitlyRequestsYouTubeUpload,
+  type VideoPlan,
+} from './videoPlan.js';
 
 export interface VideoAgentTools {
   /** Prompt-aware compact-draft validator supplied by the host application. */
@@ -331,11 +335,10 @@ async function continueValidatedVideoWorkflow(options: {
 
   if (!await invokeHostContinuationStage('video', options.generateVideo)) return;
   if (!await invokeHostContinuationStage('foley', options.generateFoley)) return;
-  // Free.ai background music generation commented out for now; proceed directly to assembly:
-  // if (
-  //   options.plan.music.enabled
-  //   && !await invokeHostContinuationStage('music', options.generateMusic)
-  // ) return;
+  if (
+    planUsesBackgroundMusic(options.plan)
+    && !await invokeHostContinuationStage('music', options.generateMusic)
+  ) return;
   if (!await invokeHostContinuationStage('assembly', options.assembleVideo)) return;
   if (
     options.uploadVideo

@@ -402,7 +402,7 @@ test("continues a durable plan without invoking the planning model again", async
     assert.deepEqual(calls, [
       "generate_video",
       "generate_foley_track",
-      "generate_music_track",
+      // "generate_music_track", // Commented out for now
       "assemble_final_video",
     ]);
     assert.ok(result.finalText.trim());

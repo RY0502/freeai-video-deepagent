@@ -1,4 +1,4 @@
-import type { VideoPlan } from './agent/videoPlan.js';
+import { type VideoPlan, planUsesBackgroundMusic } from './agent/videoPlan.js';
 import { FREE_AI_MUSIC_MODEL } from './freeai/index.js';
 import { SOURCE_AUDIO_INSPECTION_REVISION } from './media/index.js';
 import {
@@ -266,13 +266,12 @@ export async function reconcileDueMediaCheckpoints(options: {
     }
   }
 
-  // Free.ai background music generation commented out for now:
-  // if (plan.music.enabled) {
-  //   const music = await stateStore.loadCheckpoint(originalPrompt, videoCheckpointKeys.music);
-  //   if (
-  //     music
-  //     && shouldReconcile(videoCheckpointKeys.music, music, now)
-  //   ) await invoke(videoCheckpointKeys.music, 'generateMusic');
-  // }
+  if (planUsesBackgroundMusic(plan)) {
+    const music = await stateStore.loadCheckpoint(originalPrompt, videoCheckpointKeys.music);
+    if (
+      music
+      && shouldReconcile(videoCheckpointKeys.music, music, now)
+    ) await invoke(videoCheckpointKeys.music, 'generateMusic');
+  }
   return outcomes;
 }

@@ -166,8 +166,7 @@ function requiredMediaKeys(plan: VideoPlan): VideoCheckpointKey[] {
   return [
     videoCheckpointKeys.sourceVideo,
     videoCheckpointKeys.foley,
-    // Commented out: background music not generated, proceed directly to assembly
-    // ...(planUsesBackgroundMusic(plan) ? [videoCheckpointKeys.music] : []),
+    ...(planUsesBackgroundMusic(plan) ? [videoCheckpointKeys.music] : []),
   ];
 }
 
