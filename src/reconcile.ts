@@ -266,12 +266,13 @@ export async function reconcileDueMediaCheckpoints(options: {
     }
   }
 
-  if (plan.music.enabled) {
-    const music = await stateStore.loadCheckpoint(originalPrompt, videoCheckpointKeys.music);
-    if (
-      music
-      && shouldReconcile(videoCheckpointKeys.music, music, now)
-    ) await invoke(videoCheckpointKeys.music, 'generateMusic');
-  }
+  // Free.ai background music generation commented out for now:
+  // if (plan.music.enabled) {
+  //   const music = await stateStore.loadCheckpoint(originalPrompt, videoCheckpointKeys.music);
+  //   if (
+  //     music
+  //     && shouldReconcile(videoCheckpointKeys.music, music, now)
+  //   ) await invoke(videoCheckpointKeys.music, 'generateMusic');
+  // }
   return outcomes;
 }

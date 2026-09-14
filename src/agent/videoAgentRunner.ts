@@ -331,10 +331,11 @@ async function continueValidatedVideoWorkflow(options: {
 
   if (!await invokeHostContinuationStage('video', options.generateVideo)) return;
   if (!await invokeHostContinuationStage('foley', options.generateFoley)) return;
-  if (
-    options.plan.music.enabled
-    && !await invokeHostContinuationStage('music', options.generateMusic)
-  ) return;
+  // Free.ai background music generation commented out for now; proceed directly to assembly:
+  // if (
+  //   options.plan.music.enabled
+  //   && !await invokeHostContinuationStage('music', options.generateMusic)
+  // ) return;
   if (!await invokeHostContinuationStage('assembly', options.assembleVideo)) return;
   if (
     options.uploadVideo

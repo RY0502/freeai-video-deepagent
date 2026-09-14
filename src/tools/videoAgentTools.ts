@@ -3353,6 +3353,8 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         }
       }
 
+      // Free.ai background music generation commented out for now; proceed directly to assembly:
+      /*
       await rm(outputPath, { force: true }).catch(() => undefined);
       await stateStore.startCheckpoint(originalPrompt, key, {
         provider: "free.ai",
@@ -3406,6 +3408,12 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         );
       }
       return await completeMusic(generated);
+      */
+      return json({
+        status: "skipped",
+        reason: "Background music generation via Free.ai API call is commented out for now.",
+        instruction: "Continue directly to final assembly with the selected diegetic soundtrack only.",
+      });
     },
   });
 
@@ -3452,7 +3460,8 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
       const missing = [
         ...(!await completedArtifactIsValid(video) ? ["video"] : []),
         ...(!foregroundBinding ? ["foreground_audio"] : []),
-        ...(musicRequested && !musicAvailable && !musicOmitted ? ["music"] : []),
+        // Commented out: background music is not required to proceed to assembly
+        // ...(musicRequested && !musicAvailable && !musicOmitted ? ["music"] : []),
       ];
       if (missing.length) {
         await resetInterruptedLocalAssembly({
