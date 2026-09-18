@@ -192,14 +192,29 @@ function isQuotaExhausted(text: string): boolean {
  * non-acceptance, not an ambiguous submission: there is no video_id to poll
  * and a later invocation may safely submit the locked request again.
  */
+const AGNES_CAPACITY_CODES = new Set([
+  "video_queue_full",
+  "queue_full",
+  "submission_queue_full",
+  "video_submission_queue_full",
+  "capacity_exceeded",
+  "queue_capacity_exceeded",
+  "queue_capacity_reached",
+  "queue_at_capacity",
+  "server_busy",
+  "system_busy",
+]);
+
 export function isAgnesProviderCapacityRejection(payload: unknown): boolean {
   const code = providerCode(payload);
-  if (code === "video_queue_full" || code === "queue_full") {
+  if (code && AGNES_CAPACITY_CODES.has(code.toLowerCase())) {
     return true;
   }
   const text = normalizedDiagnostics(payload);
-  return /\b(?:(?:video(?: generation)?|render|request)\s+)?queue\s+(?:is\s+)?(?:full|at capacity)\b/.test(text)
-    || /\b(?:(?:video(?: generation)?|render|request)\s+)?queue\s+(?:has\s+)?(?:reached|exceeded)\s+(?:its\s+)?capacity\b/.test(text);
+  if (!/\bqueues?\b/.test(text)) return false;
+  return /\bqueues?\s+(?:\w+\s+){0,3}(?:full|at capacity|busy|overloaded)\b/.test(text)
+    || /\bqueues?\s+(?:\w+\s+){0,3}(?:reached|exceeded)\s+(?:(?:\w+)\s+)?capacity\b/.test(text)
+    || /\bqueues?\s+(?:limit|quota)\s+(?:reached|exceeded)\b/.test(text);
 }
 
 export interface ClassifyAgnesErrorOptions {

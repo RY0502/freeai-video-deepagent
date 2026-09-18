@@ -343,6 +343,7 @@ export class AgnesVideoClient {
   private readonly requestTimeoutMs: number;
   private readonly capacityMaxRetries: number;
   private readonly capacityRetryIntervalMs: number;
+  private readonly capacityRetryJitterMs: number;
   private readonly endpoints: AgnesEndpoints;
 
   constructor(options: AgnesClientOptions = {}) {
@@ -386,6 +387,11 @@ export class AgnesVideoClient {
     this.capacityRetryIntervalMs = finiteMilliseconds(
       "capacityRetryIntervalMs",
       options.capacityRetryIntervalMs ?? DEFAULT_AGNES_CAPACITY_RETRY_INTERVAL_MS,
+      true,
+    );
+    this.capacityRetryJitterMs = finiteMilliseconds(
+      "capacityRetryJitterMs",
+      options.capacityRetryJitterMs ?? 0,
       true,
     );
   }
@@ -449,6 +455,9 @@ export class AgnesVideoClient {
     const capacityRetryIntervalMs = request.capacityRetryIntervalMs !== undefined
       ? finiteMilliseconds("capacityRetryIntervalMs", request.capacityRetryIntervalMs, true)
       : this.capacityRetryIntervalMs;
+    const capacityRetryJitterMs = request.capacityRetryJitterMs !== undefined
+      ? finiteMilliseconds("capacityRetryJitterMs", request.capacityRetryJitterMs, true)
+      : this.capacityRetryJitterMs;
 
     let capacityAttempts = 0;
     while (true) {
@@ -574,17 +583,24 @@ export class AgnesVideoClient {
                 kind: "provider_capacity",
                 keys: rawKeys,
               });
+          const requestedDelay = agnesError.retryAfterMs !== undefined && agnesError.retryAfterMs > 0
+            ? agnesError.retryAfterMs
+            : capacityRetryIntervalMs;
+          const jitter = capacityRetryJitterMs > 0
+            ? Math.floor(Math.random() * capacityRetryJitterMs)
+            : 0;
+          const retryDelayMs = Math.max(capacityRetryIntervalMs, requestedDelay) + jitter;
           try {
             request.onCapacityRetry?.({
               attempt: capacityAttempts,
               maxRetries: maxCapacityRetries,
-              delayMs: capacityRetryIntervalMs,
+              delayMs: retryDelayMs,
               error: agnesError,
             });
           } catch {
             // Diagnostics callbacks must not influence retry behavior.
           }
-          await this.sleep(capacityRetryIntervalMs);
+          await this.sleep(retryDelayMs);
           continue;
         }
         throw error;

@@ -605,6 +605,7 @@ async function main(): Promise<void> {
       maxDownloadBytes: config.AGNES_MAX_DOWNLOAD_BYTES,
       capacityMaxRetries: config.AGNES_CAPACITY_MAX_RETRIES,
       capacityRetryIntervalMs: config.AGNES_CAPACITY_RETRY_INTERVAL_MS,
+      capacityRetryJitterMs: config.AGNES_CAPACITY_RETRY_JITTER_MS,
     });
     const elevenLabs = new ElevenLabsClient({
       baseUrl: config.ELEVENLABS_BASE_URL,

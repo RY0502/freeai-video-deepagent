@@ -2597,6 +2597,9 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             prompt: agnesVideoPrompt(plan, originalPrompt),
             seconds: plan.totalDurationSeconds,
             aspectRatio: plan.delivery.aspectRatio,
+            capacityMaxRetries: config.AGNES_CAPACITY_MAX_RETRIES,
+            capacityRetryIntervalMs: config.AGNES_CAPACITY_RETRY_INTERVAL_MS,
+            capacityRetryJitterMs: config.AGNES_CAPACITY_RETRY_JITTER_MS,
             onAttempt: ({ keyLabel }) => emitEvent(options.onEvent, { event: "video_key_attempt", keyLabel }),
             onCapacityRetry: ({ attempt, maxRetries, delayMs }) => {
               emitEvent(options.onEvent, {

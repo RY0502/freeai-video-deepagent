@@ -23,7 +23,7 @@ export type AgnesFetch = (
 export type AgnesSleep = (milliseconds: number) => Promise<void>;
 export type AgnesClock = () => number;
 
-export const DEFAULT_AGNES_CAPACITY_MAX_RETRIES = 2;
+export const DEFAULT_AGNES_CAPACITY_MAX_RETRIES = 10;
 export const DEFAULT_AGNES_CAPACITY_RETRY_INTERVAL_MS = 30_000;
 
 export interface AgnesCapacityRetryEvent {
@@ -50,10 +50,12 @@ export interface AgnesClientOptions {
   requestTimeoutMs?: number;
   /** Defaults to 256 MiB. */
   maxDownloadBytes?: number;
-  /** Retries when Agnes rejects due to full video queue. Defaults to 2. */
+  /** Retries when Agnes rejects due to full video queue. Defaults to 10. */
   capacityMaxRetries?: number;
   /** Delay between capacity retries. Defaults to 30,000ms (30s). */
   capacityRetryIntervalMs?: number;
+  /** Maximum randomized jitter added to capacity retry delays. Defaults to 0. */
+  capacityRetryJitterMs?: number;
 }
 
 export interface AgnesSubmitVideoRequest {
@@ -67,6 +69,8 @@ export interface AgnesSubmitVideoRequest {
   capacityMaxRetries?: number;
   /** Delay between capacity retries. Defaults to client setting. */
   capacityRetryIntervalMs?: number;
+  /** Maximum randomized jitter added to capacity retry delays. Defaults to client setting. */
+  capacityRetryJitterMs?: number;
   /** Notification when a capacity retry is scheduled. */
   onCapacityRetry?: (retry: AgnesCapacityRetryEvent) => void;
 }

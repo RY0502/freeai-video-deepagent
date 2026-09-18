@@ -274,8 +274,17 @@ test("does not rotate authentication, validation, network, 5xx, or ambiguous suc
   }
 });
 
-test("treats an explicit queue-full response without a task ID as a safe later resubmission after retrying twice", async () => {
+test("treats an explicit queue-full response without a task ID as a safe later resubmission after retrying 10 times", async () => {
   assert.equal(isAgnesProviderCapacityRejection("video queue is full, please retry later"), true);
+  assert.equal(isAgnesProviderCapacityRejection("agnes submission queue is full"), true);
+  assert.equal(isAgnesProviderCapacityRejection("submission queue full"), true);
+  assert.equal(isAgnesProviderCapacityRejection("agnes submission queue is currently full"), true);
+  assert.equal(isAgnesProviderCapacityRejection("queue has reached maximum capacity"), true);
+  assert.equal(isAgnesProviderCapacityRejection("video queue is busy"), true);
+  assert.equal(isAgnesProviderCapacityRejection("all queues are full"), true);
+  assert.equal(isAgnesProviderCapacityRejection("queue is temporarily full"), true);
+  assert.equal(isAgnesProviderCapacityRejection({ code: "submission_queue_full" }), true);
+  assert.equal(isAgnesProviderCapacityRejection({ code: "video_submission_queue_full" }), true);
   assert.equal(isAgnesProviderCapacityRejection("temporarily unavailable, please retry later"), false);
   let calls = 0;
   const delays: number[] = [];
@@ -304,16 +313,17 @@ test("treats an explicit queue-full response without a task ID as a safe later r
       return true;
     },
   );
-  assert.equal(calls, 3);
-  assert.deepEqual(delays, [30_000, 30_000]);
+  assert.equal(calls, 11);
+  assert.deepEqual(delays, Array(10).fill(30_000));
 });
 
-test("retries queue-full response twice with 30s interval and succeeds on attempt 3", async () => {
+test("retries queue-full response twice with 30s interval and succeeds on attempt 3 when capacityMaxRetries is 2", async () => {
   let calls = 0;
   const delays: number[] = [];
   const retryEvents: unknown[] = [];
   const client = new AgnesVideoClient({
     apiKeys: ["first-secret"],
+    capacityMaxRetries: 2,
     sleep: async (ms) => { delays.push(ms); },
     fetch: async () => {
       calls += 1;
@@ -351,6 +361,44 @@ test("retries queue-full response twice with 30s interval and succeeds on attemp
     { attempt: 1, maxRetries: 2, delayMs: 30_000 },
     { attempt: 2, maxRetries: 2, delayMs: 30_000 },
   ]);
+});
+
+test("retries queue-full response respecting retry_after when greater than capacityRetryIntervalMs", async () => {
+  let calls = 0;
+  const delays: number[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["first-secret"],
+    capacityMaxRetries: 1,
+    capacityRetryIntervalMs: 30_000,
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          code: "queue_full",
+          message: "submission queue is full, please retry later",
+          retry_after: 45,
+        }, 503);
+      }
+      return jsonResponse({
+        video_id: "vid-respected-retry-after",
+        task_id: "task-respected-retry-after",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "Ocean waves crashing on rocky cliffs",
+    seconds: 6,
+    aspectRatio: "16:9",
+  });
+
+  assert.equal(calls, 2);
+  assert.equal(task.video_id, "vid-respected-retry-after");
+  assert.deepEqual(delays, [45_000]);
 });
 
 test("retries queue-full response and succeeds on attempt 2 after 30s delay", async () => {
