@@ -241,6 +241,29 @@ function defaultCreateYouTubeClient(auth: YouTubeOAuthClient): YouTubeApiClient 
   return google.youtube({ version: "v3", auth: auth as never }) as unknown as YouTubeApiClient;
 }
 
+/**
+ * Limits description hashtags to a small number of specific ones (default 2-3).
+ * Strips out excess hashtags from hashtag walls/blocks to prevent spam flags.
+ */
+export function sanitizeDescriptionHashtags(description: string, maxHashtags: number = 3): string {
+  if (!description) return "";
+  const hashtagRegex = /#[\p{L}\p{N}_]+/gu;
+  const matches = description.match(hashtagRegex);
+  if (!matches || matches.length <= maxHashtags) {
+    return description;
+  }
+  let kept = 0;
+  return description
+    .replace(hashtagRegex, (tag) => {
+      kept++;
+      return kept <= maxHashtags ? tag : "";
+    })
+    .replace(/[ \t]+/g, " ")
+    .replace(/[ \t]+(\r?\n)/g, "$1")
+    .replace(/(\r?\n){3,}/g, "\n\n")
+    .trim();
+}
+
 export function createYouTubeUploader(
   config: YouTubeUploaderConfig = {},
   dependencies: YouTubeUploadDependencies = {},
@@ -304,9 +327,9 @@ export function createYouTubeUploader(
           requestBody: {
             snippet: {
               title: input.title.trim(),
-              description: input.description ?? "",
+              description: sanitizeDescriptionHashtags(input.description ?? "", 3),
               ...(input.tags ? { tags: input.tags.map((tag) => tag.trim()) } : {}),
-              categoryId: input.categoryId ?? "22",
+              categoryId: input.categoryId ?? "1",
             },
             status: {
               privacyStatus,

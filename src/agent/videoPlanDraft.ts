@@ -1,3 +1,4 @@
+import { sanitizeDescriptionHashtags } from '../youtube/upload.js';
 import { z } from 'zod';
 
 import { promptExplicitlyRequestsYouTubeUpload, stripYouTubeUploadAuthorization } from '../authorization.js';
@@ -494,15 +495,13 @@ function youtubeTags(draft: VideoPlanDraft, visualStyle: string): string[] {
   const keywords = `${draft.concept} ${draft.creativeScript}`
     .toLocaleLowerCase('en-US')
     .match(/[a-z0-9][a-z0-9'-]{2,}/g) ?? [];
-  const inferred = keywords.filter((word) => !stopWords.has(word)).slice(0, 8);
+  const inferred = keywords.filter((word) => !stopWords.has(word)).slice(0, 4);
   const candidates = [
     ...(draft.youtubeUpload?.tags ?? []),
     ...inferred,
     visualStyle,
     'short film',
-    'visual storytelling',
-    'cinematic story',
-    'creative short',
+    'cinematic short',
   ];
   const tags: string[] = [];
   const normalized = new Set<string>();
@@ -510,6 +509,16 @@ function youtubeTags(draft: VideoPlanDraft, visualStyle: string): string[] {
     const tag = cleanMetadata(candidate).slice(0, 100).trim();
     const fingerprint = tag.toLocaleLowerCase('en-US');
     if (!tag || normalized.has(fingerprint)) continue;
+
+    // Filter redundant variations
+    const isRedundant =
+      (fingerprint.includes('short film') || fingerprint.includes('cinematic short') || fingerprint.includes('visual story')) &&
+      tags.some((existing) => {
+        const exLower = existing.toLocaleLowerCase('en-US');
+        return exLower.includes('short film') || exLower.includes('cinematic short') || exLower.includes('visual story');
+      });
+    if (isRedundant) continue;
+
     const proposed = [...tags, tag];
     const aggregateCharacters = Array.from(proposed
       .map((value) => value.includes(' ') ? `"${value}"` : value)
@@ -517,7 +526,7 @@ function youtubeTags(draft: VideoPlanDraft, visualStyle: string): string[] {
     if (aggregateCharacters > 500) continue;
     normalized.add(fingerprint);
     tags.push(tag);
-    if (tags.length === 12) break;
+    if (tags.length === 5) break;
   }
   return tags;
 }
@@ -732,7 +741,7 @@ export function materializeVideoPlanDraft(
       youtubeUpload: {
         requested: true,
         title: title || 'Short Cinematic Story',
-        description: description || 'A short cinematic visual story.',
+        description: sanitizeDescriptionHashtags(description || 'A short cinematic visual story.', 3),
         tags: youtubeTags(draft, preferences.video.style),
         categoryId: youtubeSource?.categoryId ?? inferredYouTubeCategory(`${concept} ${creativeScript}`),
         privacyStatus: options.config.YOUTUBE_DEFAULT_PRIVACY,
