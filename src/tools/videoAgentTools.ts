@@ -248,6 +248,7 @@ export type VideoAgentEvent =
   | { event: "music_downloaded"; path: string; model: typeof FREE_AI_MUSIC_MODEL; source: "provider" | "local_reuse" }
   | { event: "music_generation_failed"; reason: string; retrySafe: boolean; source: "provider" | "local" | "snapshot" }
   | { event: "music_omitted"; reason: string; source: "provider" | "local" | "snapshot"; foleyOnly: true }
+  | { event: "storage_uploaded"; url: string; objectKey: string; bucket: string; provider: string }
   | { event: "foley_generation_started"; cueCount: number; durationSeconds: number; placement: "local_ffmpeg_sample_timeline" }
   | { event: "foley_key_attempt"; cueId: string; keyLabel: string }
   | { event: "foley_mix_rebuild"; previousRevision: number | null; audioMixRevision: number; cueAssetsRetained: true }
@@ -1884,15 +1885,44 @@ async function nonEmptyLocalFile(filePath: string): Promise<boolean> {
   }
 }
 
+export function extractImageUrlsFromPrompt(prompt: string): string[] {
+  if (!prompt || typeof prompt !== "string") return [];
+  const urlRegex = /https?:\/\/[^\s<>"'`]+/gi;
+  const matches = prompt.match(urlRegex) || [];
+  const urls: string[] = [];
+  const seen = new Set<string>();
+
+  for (const raw of matches) {
+    const cleaned = raw.replace(/[.,;:!?)]+$/, "").trim();
+    try {
+      const parsed = new URL(cleaned);
+      if (parsed.protocol === "http:" || parsed.protocol === "https:") {
+        const normalized = parsed.toString();
+        if (!seen.has(normalized)) {
+          seen.add(normalized);
+          urls.push(normalized);
+        }
+      }
+    } catch {
+      // Skip invalid URLs
+    }
+    if (urls.length >= 5) break;
+  }
+  return urls;
+}
+
 function requestDigest(plan: VideoPlan, originalPrompt: string): string {
+  const imageUrls = extractImageUrlsFromPrompt(originalPrompt);
+  const mode = imageUrls.length > 0 ? "reference" : "text";
   return createHash("sha256").update(JSON.stringify({
     model: AGNES_VIDEO_MODEL,
     prompt: agnesVideoPrompt(plan, originalPrompt),
     seconds: String(plan.totalDurationSeconds),
-    mode: "text",
+    mode,
     size: "720P",
     aspect_ratio: plan.delivery.aspectRatio,
     n: 1,
+    ...(imageUrls.length > 0 ? { images: imageUrls } : {}),
   })).digest("hex");
 }
 
@@ -2565,6 +2595,8 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         invocationPending = checkpoint.error ?? "Agnes submission is waiting for its retry time.";
         return json({ status: "pending", reason: invocationPending, retryAt: checkpoint.retryAt });
       } else {
+        const imageUrls = extractImageUrlsFromPrompt(originalPrompt);
+        const isReferenceMode = imageUrls.length > 0;
         const startedCheckpoint = await stateStore.startCheckpoint(originalPrompt, key, {
           provider: "agnes",
           model: AGNES_VIDEO_MODEL,
@@ -2574,6 +2606,8 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             agnesPromptRevision: promptRevision,
             durationSeconds: plan.totalDurationSeconds,
             aspectRatio: plan.delivery.aspectRatio,
+            mode: isReferenceMode ? "reference" : "text",
+            ...(isReferenceMode ? { images: imageUrls } : {}),
           },
         });
         emitEvent(options.onEvent, {
@@ -2591,12 +2625,15 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             negativePrompt: plan.negativePrompt,
             negativeBible: plan.continuityBible.negativeConstraints,
           },
+          ...(isReferenceMode ? { mode: "reference", images: imageUrls } : { mode: "text" }),
         });
         try {
           task = await agnes.submitVideo({
             prompt: agnesVideoPrompt(plan, originalPrompt),
             seconds: plan.totalDurationSeconds,
             aspectRatio: plan.delivery.aspectRatio,
+            mode: isReferenceMode ? "reference" : "text",
+            ...(isReferenceMode ? { images: imageUrls } : {}),
             capacityMaxRetries: config.AGNES_CAPACITY_MAX_RETRIES,
             capacityRetryIntervalMs: config.AGNES_CAPACITY_RETRY_INTERVAL_MS,
             capacityRetryJitterMs: config.AGNES_CAPACITY_RETRY_JITTER_MS,

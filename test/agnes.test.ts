@@ -836,3 +836,111 @@ test("validates the documented four-to-twelve-second duration and six aspect rat
   );
   assert.equal(calls, 0);
 });
+
+test("submits reference video payload with image URLs", async () => {
+  const calls: Array<{ url: string; body: unknown }> = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["key-1"],
+    fetch: async (input, init) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)),
+      });
+      return jsonResponse(providerTask());
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "A scene referencing images",
+    seconds: 5,
+    aspectRatio: "16:9",
+    mode: "reference",
+    images: [
+      "https://example.com/img1.png",
+      "https://example.com/img2.jpg",
+    ],
+  });
+
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.body, {
+    model: "agnes-video-2.5-flash",
+    prompt: "A scene referencing images",
+    seconds: "5",
+    mode: "reference",
+    size: "720P",
+    aspect_ratio: "16:9",
+    n: 1,
+    images: [
+      "https://example.com/img1.png",
+      "https://example.com/img2.jpg",
+    ],
+  });
+  assert.equal(task.video_id, "video-1");
+});
+
+test("validates reference image URLs and constraints", async () => {
+  let calls = 0;
+  const client = new AgnesVideoClient({
+    apiKeys: ["key-1"],
+    fetch: async () => {
+      calls += 1;
+      return jsonResponse(providerTask());
+    },
+  });
+
+  // Empty images in reference mode
+  await assert.rejects(
+    client.submitVideo({
+      prompt: "scene",
+      seconds: 5,
+      aspectRatio: "16:9",
+      mode: "reference",
+      images: [],
+    }),
+    (error: unknown) => error instanceof AgnesError && error.kind === "validation",
+  );
+
+  // More than 5 images
+  await assert.rejects(
+    client.submitVideo({
+      prompt: "scene",
+      seconds: 5,
+      aspectRatio: "16:9",
+      images: [
+        "https://example.com/1.png",
+        "https://example.com/2.png",
+        "https://example.com/3.png",
+        "https://example.com/4.png",
+        "https://example.com/5.png",
+        "https://example.com/6.png",
+      ],
+    }),
+    (error: unknown) => error instanceof AgnesError && error.kind === "validation",
+  );
+
+  // Invalid URL protocol
+  await assert.rejects(
+    client.submitVideo({
+      prompt: "scene",
+      seconds: 5,
+      aspectRatio: "16:9",
+      images: ["ftp://example.com/1.png"],
+    }),
+    (error: unknown) => error instanceof AgnesError && error.kind === "validation",
+  );
+
+  // Images provided in explicit text mode
+  await assert.rejects(
+    client.submitVideo({
+      prompt: "scene",
+      seconds: 5,
+      aspectRatio: "16:9",
+      mode: "text",
+      images: ["https://example.com/1.png"],
+    }),
+    (error: unknown) => error instanceof AgnesError && error.kind === "validation",
+  );
+
+  assert.equal(calls, 0);
+});
+

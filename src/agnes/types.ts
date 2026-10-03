@@ -58,11 +58,17 @@ export interface AgnesClientOptions {
   capacityRetryJitterMs?: number;
 }
 
+export const AGNES_MAX_REFERENCE_IMAGES = 5 as const;
+export type AgnesVideoMode = "text" | "reference";
+
 export interface AgnesSubmitVideoRequest {
   prompt: string;
   /** Agnes Video 2.5 Flash accepts integer durations from 4 through 12 seconds. */
   seconds: number;
   aspectRatio: AgnesAspectRatio;
+  mode?: AgnesVideoMode;
+  /** One to five public HTTP(S) image URLs that serve as image references. */
+  images?: readonly string[];
   /** Secret-free notification immediately before each provider POST. */
   onAttempt?: (attempt: { keyLabel: string }) => void;
   /** Retries when Agnes rejects due to full video queue. Defaults to client setting. */

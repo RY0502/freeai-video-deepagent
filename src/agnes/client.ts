@@ -18,6 +18,7 @@ import {
 import {
   AGNES_ASPECT_RATIOS,
   AGNES_DEFAULT_BASE_URL,
+  AGNES_MAX_REFERENCE_IMAGES,
   AGNES_VIDEO_MODEL,
   DEFAULT_AGNES_CAPACITY_MAX_RETRIES,
   DEFAULT_AGNES_CAPACITY_RETRY_INTERVAL_MS,
@@ -203,6 +204,58 @@ function validAspectRatio(value: string): asserts value is AgnesSubmitVideoReque
       { kind: "validation" },
     );
   }
+}
+
+function validReferenceImageUrl(value: unknown, index: number): string {
+  const candidate = typeof value === "string" ? value.trim() : "";
+  if (!candidate) {
+    throw new AgnesError(`images[${index}] must not be empty`, { kind: "validation" });
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(candidate);
+  } catch {
+    throw new AgnesError(`images[${index}] must be an absolute public HTTP(S) URL`, {
+      kind: "validation",
+    });
+  }
+  if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
+    throw new AgnesError(`images[${index}] must use HTTP or HTTPS`, { kind: "validation" });
+  }
+  if (parsed.username || parsed.password) {
+    throw new AgnesError(`images[${index}] must not contain URL credentials`, {
+      kind: "validation",
+    });
+  }
+  return candidate;
+}
+
+function validReferenceImages(request: AgnesSubmitVideoRequest): string[] | undefined {
+  const hasImages = Array.isArray(request.images) && request.images.length > 0;
+  const isReference = request.mode === "reference" || (hasImages && request.mode !== "text");
+
+  if (!isReference) {
+    if (request.images !== undefined && request.images.length > 0) {
+      throw new AgnesError("text mode must not include reference images", {
+        kind: "validation",
+      });
+    }
+    return undefined;
+  }
+
+  if (!Array.isArray(request.images) || request.images.length === 0) {
+    throw new AgnesError("reference mode requires at least one image URL", {
+      kind: "validation",
+    });
+  }
+  if (request.images.length > AGNES_MAX_REFERENCE_IMAGES) {
+    throw new AgnesError(
+      `reference mode accepts at most ${AGNES_MAX_REFERENCE_IMAGES} image URLs`,
+      { kind: "validation" },
+    );
+  }
+  return request.images.map(validReferenceImageUrl);
 }
 
 function finiteMilliseconds(name: string, value: number, allowZero: boolean): number {
@@ -437,14 +490,18 @@ export class AgnesVideoClient {
       );
     }
 
+    const images = validReferenceImages(request);
+    const mode = images && images.length > 0 ? "reference" : (request.mode ?? "text");
+
     const payload = {
       model: AGNES_VIDEO_MODEL,
       prompt,
       seconds: String(seconds),
-      mode: "text",
+      mode,
       size: "720P",
       aspect_ratio: request.aspectRatio,
       n: 1,
+      ...(images && images.length > 0 ? { images } : {}),
     } as const;
     const body = JSON.stringify(payload);
     const rawKeys = this.keys.map(({ key }) => key);

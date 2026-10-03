@@ -104,7 +104,8 @@ export type VideoCheckpointKey =
   | "video:checkpoint:audio:foley"
   | "video:checkpoint:audio:music"
   | "video:checkpoint:assembly:final"
-  | "video:checkpoint:youtube:upload";
+  | "video:checkpoint:youtube:upload"
+  | "video:checkpoint:storage:upload";
 
 const PipelineStateSchema = z.object({
   schemaVersion: z.literal(2),
@@ -122,9 +123,10 @@ export const videoCheckpointKeys = {
   music: "video:checkpoint:audio:music" as const,
   assembly: "video:checkpoint:assembly:final" as const,
   youtubeUpload: "video:checkpoint:youtube:upload" as const,
+  storageUpload: "video:checkpoint:storage:upload" as const,
 };
 
-const VIDEO_CHECKPOINT_KEY = /^video:checkpoint:(?:source|analysis:(?:source-audio|foley)|audio:(?:foley|music)|assembly:final|youtube:upload)$/;
+const VIDEO_CHECKPOINT_KEY = /^video:checkpoint:(?:source|analysis:(?:source-audio|foley)|audio:(?:foley|music)|assembly:final|youtube:upload|storage:upload)$/;
 
 export interface StartCheckpointInput {
   attempt?: number;

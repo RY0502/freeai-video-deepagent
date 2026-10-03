@@ -47,6 +47,14 @@ const envSchema = z.object({
   YOUTUBE_DEFAULT_PRIVACY: z.enum(["private", "unlisted", "public"]).default("private"),
   YOUTUBE_DEFAULT_MADE_FOR_KIDS: booleanFromEnv.default("false"),
   YOUTUBE_DEFAULT_CONTAINS_SYNTHETIC_MEDIA: booleanFromEnv.default("false"),
+  SUPABASE_URL: z.string().default("https://usdiugdjvlmeteiwsrwg.supabase.co"),
+  SUPABASE_STORAGE_BUCKET: z.string().default("shared"),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().default(""),
+  APPWRITE_ENDPOINT: z.string().default(""),
+  APPWRITE_PROJECT_ID: z.string().default(""),
+  APPWRITE_API_KEY: z.string().default(""),
+  APPWRITE_BUCKET_ID: z.string().default(""),
+  EPISODE_DAILY_TIMEZONE: z.string().default("Asia/Kolkata"),
 }).superRefine((config, context) => {
   if (config.AGNES_POLL_INTERVAL_MS > config.AGNES_POLL_WINDOW_MS) {
     context.addIssue({

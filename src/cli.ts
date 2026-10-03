@@ -38,11 +38,13 @@ import {
   resolveGenerationConfiguration,
   resolvePromptPreferencesForConfig,
   SOURCE_AUDIO_ANALYSIS_MODEL,
+  extractImageUrlsFromPrompt,
   validateCompletedFinalVideoForState,
   videoSnapshotEvent,
   type VideoAgentEvent,
   type VideoToolBundle,
 } from "./tools/videoAgentTools.js";
+import { uploadVideoToStorage } from "./storage/index.js";
 import {
   FOLEY_RECONCILIATION_MODEL,
   FOLEY_RECONCILIATION_REVISION,
@@ -71,6 +73,12 @@ async function cleanupRunIfYouTubeUploadCompleted(options: {
 }): Promise<boolean> {
   const youtube = await options.state.loadCheckpoint(options.originalPrompt, videoCheckpointKeys.youtubeUpload);
   if (youtube?.status === "completed" && youtube.externalId) {
+    if (extractImageUrlsFromPrompt(options.originalPrompt).length > 0) {
+      const storage = await options.state.loadCheckpoint(options.originalPrompt, videoCheckpointKeys.storageUpload);
+      if (storage?.status !== "completed") {
+        return false;
+      }
+    }
     const cleanup = await cleanupCompletedUploadRun({
       runDirectory: options.runDirectory,
       originalCwd: options.originalCwd,
@@ -119,7 +127,7 @@ export function publicCheckpoint(checkpoint: ArtifactCheckpoint | null | undefin
     ...(checkpoint.retryAt ? { retryAt: checkpoint.retryAt } : {}),
     ...(checkpoint.retrySafe !== undefined ? { retrySafe: checkpoint.retrySafe } : {}),
     ...(checkpoint.error ? { error: checkpoint.error } : {}),
-    ...(checkpoint.provider === "youtube" && checkpoint.url ? { url: checkpoint.url } : {}),
+    ...((checkpoint.provider === "youtube" || checkpoint.provider === "supabase" || checkpoint.provider === "appwrite" || checkpoint.provider === "storage") && checkpoint.url ? { url: checkpoint.url } : {}),
     startedAt: checkpoint.startedAt,
     updatedAt: checkpoint.updatedAt,
   };
@@ -454,6 +462,79 @@ async function uploadCompletedVideoIfReady(options: {
   return true;
 }
 
+export async function uploadVideoToStorageIfReady(options: {
+  state: VideoRunStateStore;
+  originalPrompt: string;
+  config: ReturnType<typeof loadConfig>;
+  logEvent?: (event: VideoAgentEvent) => void;
+}): Promise<boolean> {
+  const existingStorage = await options.state.loadCheckpoint(
+    options.originalPrompt,
+    videoCheckpointKeys.storageUpload,
+  );
+  if (existingStorage?.status === "completed" && existingStorage.url) {
+    console.log(`Storage upload already completed: ${existingStorage.url}`);
+    return true;
+  }
+
+  const assembly = await options.state.loadCheckpoint(
+    options.originalPrompt,
+    videoCheckpointKeys.assembly,
+  );
+  if (assembly?.status !== "completed" || !assembly.path) {
+    return false;
+  }
+
+  console.log(`[Storage Uploader] Uploading video to storage ('shorts' directory in bucket)...`);
+  await options.state.startCheckpoint(
+    options.originalPrompt,
+    videoCheckpointKeys.storageUpload,
+    {
+      provider: "storage",
+      details: { videoPath: assembly.path },
+    },
+  );
+
+  try {
+    const uploadResult = await uploadVideoToStorage(assembly.path, options.config);
+    await options.state.completeCheckpoint(
+      options.originalPrompt,
+      videoCheckpointKeys.storageUpload,
+      {
+        path: assembly.path,
+        url: uploadResult.publicUrl,
+        externalId: uploadResult.objectKey,
+        sha256: uploadResult.sha256,
+        provider: uploadResult.provider,
+        details: {
+          bucket: uploadResult.bucket,
+          objectKey: uploadResult.objectKey,
+          bytes: uploadResult.bytes,
+        },
+      },
+    );
+    console.log(`[Storage Uploader] Upload successful! Public URL: ${uploadResult.publicUrl}`);
+    options.logEvent?.({
+      event: "storage_uploaded" as any,
+      url: uploadResult.publicUrl,
+      objectKey: uploadResult.objectKey,
+      bucket: uploadResult.bucket,
+      provider: uploadResult.provider,
+    });
+    return true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`[Storage Uploader] Warning: Storage upload failed: ${message}`);
+    await options.state.failCheckpoint(
+      options.originalPrompt,
+      videoCheckpointKeys.storageUpload,
+      message,
+      true,
+    );
+    return false;
+  }
+}
+
 /** Ensure an agent cannot stop after optional music fallback without assembly. */
 async function assembleCompletedVideoIfReady(options: {
   assembleTool: DynamicStructuredTool;
@@ -577,6 +658,14 @@ async function main(): Promise<void> {
           `${youtubeCheckpoint?.error ?? "The previous YouTube upload outcome is ambiguous."} `
           + "Check YouTube Studio and reconcile the local checkpoint manually; automatic upload is blocked to prevent a duplicate.",
         );
+      }
+      if (extractImageUrlsFromPrompt(originalPrompt).length > 0) {
+        await uploadVideoToStorageIfReady({
+          state,
+          originalPrompt,
+          config,
+          logEvent: logVideoAgentEvent,
+        });
       }
       const uploadStillNeeded = manifest.youtubeUploadRequested
         && youtubeCheckpoint?.status !== "completed"
@@ -773,6 +862,14 @@ async function main(): Promise<void> {
       throw new Error(
         "The video agent finished without a validated final MP4 and without a pending provider task.",
       );
+    }
+    if (extractImageUrlsFromPrompt(originalPrompt).length > 0) {
+      await uploadVideoToStorageIfReady({
+        state,
+        originalPrompt,
+        config,
+        logEvent: logVideoAgentEvent,
+      });
     }
     if (uploadTool) {
       const uploaded = await uploadCompletedVideoIfReady({
