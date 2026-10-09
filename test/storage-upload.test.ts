@@ -8,9 +8,9 @@ import { loadConfig } from "../src/config.js";
 
 test("uploadVideoToStorage fails if file does not exist", async () => {
   const config = loadConfig({
-    SUPABASE_SERVICE_ROLE_KEY: "secret-key",
-    SUPABASE_URL: "https://test.supabase.co",
-    SUPABASE_STORAGE_BUCKET: "shared",
+    CONVEX_DEPLOY_KEY: "secret-key",
+    CONVEX_URL: "https://test.convex.cloud",
+    CONVEX_STORAGE_BUCKET: "shared",
   });
 
   await assert.rejects(
@@ -19,52 +19,74 @@ test("uploadVideoToStorage fails if file does not exist", async () => {
   );
 });
 
-test("uploadVideoToStorage uploads to Supabase storage under 'shorts' directory", async () => {
+test("uploadVideoToStorage uploads to Convex storage under 'shorts' directory and database", async () => {
   const testDir = path.join(tmpdir(), `storage-test-${Date.now()}`);
   await mkdir(testDir, { recursive: true });
   const videoFile = path.join(testDir, "test-output.mp4");
   await writeFile(videoFile, Buffer.from("dummy-video-content-bytes"));
 
   const config = loadConfig({
-    SUPABASE_URL: "https://example.supabase.co",
-    SUPABASE_STORAGE_BUCKET: "shared",
-    SUPABASE_SERVICE_ROLE_KEY: "service-role-secret",
+    CONVEX_URL: "https://example.convex.cloud",
+    CONVEX_STORAGE_BUCKET: "shared",
+    CONVEX_DEPLOY_KEY: "deploy-key-secret",
   });
 
   const calls: Array<{ url: string; headers: Headers; method: string }> = [];
 
   const mockFetch: typeof fetch = async (input, init) => {
+    const urlStr = String(input);
     calls.push({
-      url: String(input),
+      url: urlStr,
       headers: new Headers(init?.headers),
       method: init?.method || "GET",
     });
-    return new Response(JSON.stringify({ Key: "shared/shorts/test-output.mp4" }), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    });
+
+    if (urlStr.endsWith("/api/mutation")) {
+      const body = JSON.parse(String(init?.body)) as { path: string };
+      if (body.path === "files:generateUploadUrl") {
+        return new Response(JSON.stringify({
+          status: "success",
+          value: "https://example.convex.cloud/api/storage/upload?token=abc",
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (body.path === "files:saveFile") {
+        return new Response(JSON.stringify({
+          status: "success",
+          value: {
+            storageId: "stored_vid_123",
+            url: "https://example.convex.cloud/api/storage/stored_vid_123",
+          },
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+    }
+
+    if (urlStr.includes("/api/storage/upload")) {
+      return new Response(JSON.stringify({ storageId: "stored_vid_123" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
+    return new Response("not found", { status: 404 });
   };
 
   try {
     const result = await uploadVideoToStorage(videoFile, config, { fetch: mockFetch });
 
-    assert.equal(result.provider, "supabase");
+    assert.equal(result.provider, "convex");
     assert.equal(result.bucket, "shared");
     assert.equal(result.objectKey, "shorts/test-output.mp4");
     assert.equal(
       result.publicUrl,
-      "https://example.supabase.co/storage/v1/object/public/shared/shorts/test-output.mp4",
+      "https://example.convex.cloud/api/storage/stored_vid_123",
     );
-    assert.equal(calls.length, 1);
-    assert.equal(
-      calls[0]?.url,
-      "https://example.supabase.co/storage/v1/object/shared/shorts/test-output.mp4",
-    );
-    assert.equal(calls[0]?.method, "POST");
-    assert.equal(calls[0]?.headers.get("apikey"), "service-role-secret");
-    assert.equal(calls[0]?.headers.get("authorization"), "Bearer service-role-secret");
-    assert.equal(calls[0]?.headers.get("content-type"), "video/mp4");
-    assert.equal(calls[0]?.headers.get("x-upsert"), "true");
+    assert.equal(calls.length, 3);
+    assert.equal(calls[0]?.url, "https://example.convex.cloud/api/mutation");
+    assert.equal(calls[0]?.headers.get("authorization"), "Bearer deploy-key-secret");
+    assert.equal(calls[1]?.url, "https://example.convex.cloud/api/storage/upload?token=abc");
+    assert.equal(calls[1]?.headers.get("content-type"), "video/mp4");
+    assert.equal(calls[2]?.url, "https://example.convex.cloud/api/mutation");
+    assert.equal(calls[2]?.headers.get("authorization"), "Bearer deploy-key-secret");
   } finally {
     await rm(testDir, { recursive: true, force: true });
   }

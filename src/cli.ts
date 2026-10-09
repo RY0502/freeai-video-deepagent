@@ -127,7 +127,7 @@ export function publicCheckpoint(checkpoint: ArtifactCheckpoint | null | undefin
     ...(checkpoint.retryAt ? { retryAt: checkpoint.retryAt } : {}),
     ...(checkpoint.retrySafe !== undefined ? { retrySafe: checkpoint.retrySafe } : {}),
     ...(checkpoint.error ? { error: checkpoint.error } : {}),
-    ...((checkpoint.provider === "youtube" || checkpoint.provider === "supabase" || checkpoint.provider === "appwrite" || checkpoint.provider === "storage") && checkpoint.url ? { url: checkpoint.url } : {}),
+    ...((checkpoint.provider === "youtube" || checkpoint.provider === "convex" || checkpoint.provider === "appwrite" || checkpoint.provider === "storage") && checkpoint.url ? { url: checkpoint.url } : {}),
     startedAt: checkpoint.startedAt,
     updatedAt: checkpoint.updatedAt,
   };

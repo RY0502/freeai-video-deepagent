@@ -4,12 +4,24 @@ import path from "node:path";
 import type { AppConfig } from "../config.js";
 
 export interface StorageUploadResult {
-  provider: "supabase" | "appwrite";
+  provider: "convex" | "appwrite";
   bucket: string;
   objectKey: string;
   publicUrl: string;
   bytes: number;
   sha256: string;
+  storageId?: string;
+}
+
+function formatAuthHeader(key: string): string {
+  const trimmed = key.trim();
+  if (trimmed.startsWith("Bearer ") || trimmed.startsWith("Convex ")) {
+    return trimmed;
+  }
+  if (trimmed.startsWith("dev:") || trimmed.startsWith("prod:") || trimmed.includes("|")) {
+    return `Convex ${trimmed}`;
+  }
+  return `Bearer ${trimmed}`;
 }
 
 export interface StorageUploaderOptions {
@@ -18,7 +30,9 @@ export interface StorageUploaderOptions {
 
 /**
  * Uploads a video file to the 'shorts' directory in the configured storage bucket
- * (Supabase Storage or Appwrite Storage).
+ * (Convex File Storage or Appwrite Storage).
+ * In Convex, the file is uploaded to file storage and its metadata (storageId, bucket, virtual path,
+ * public URL) is recorded in the Convex database `storedFiles` table for segregation.
  */
 export async function uploadVideoToStorage(
   videoFilePath: string,
@@ -44,47 +58,109 @@ export async function uploadVideoToStorage(
   const fileName = path.basename(resolvedPath);
   const objectKey = `shorts/${fileName}`;
 
-  // Check Supabase configuration first (referencing C:\work\content-generator-video)
-  const supabaseKey = (config.SUPABASE_SERVICE_ROLE_KEY || "").trim();
-  const supabaseUrl = (config.SUPABASE_URL || "").trim().replace(/\/+$/, "");
-  const supabaseBucket = (config.SUPABASE_STORAGE_BUCKET || "shared").trim();
+  // Check Convex configuration first
+  const convexUrl = (config.CONVEX_URL || "").trim().replace(/\/+$/, "");
+  const convexBucket = (config.CONVEX_STORAGE_BUCKET || "shared").trim();
+  const convexDeployKey = (config.CONVEX_DEPLOY_KEY || "").trim();
 
-  if (supabaseKey && supabaseUrl) {
-    const uploadUrl = `${supabaseUrl}/storage/v1/object/${encodeURIComponent(supabaseBucket)}/shorts/${encodeURIComponent(fileName)}`;
-    const publicUrl = `${supabaseUrl}/storage/v1/object/public/${encodeURIComponent(supabaseBucket)}/shorts/${encodeURIComponent(fileName)}`;
+  if (convexUrl) {
+    // 1. Generate upload URL via Convex mutation files:generateUploadUrl
+    const mutationUrl = `${convexUrl}/api/mutation`;
+    const authHeaders: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json",
+    };
+    if (convexDeployKey) {
+      authHeaders.authorization = formatAuthHeader(convexDeployKey);
+    }
 
-    const response = await fetchImpl(uploadUrl, {
+    const genUrlResponse = await fetchImpl(mutationUrl, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        path: "files:generateUploadUrl",
+        args: {},
+        format: "json",
+      }),
+    });
+
+    if (!genUrlResponse.ok) {
+      let detail = "";
+      try { detail = await genUrlResponse.text(); } catch {}
+      throw new Error(`Failed to generate Convex upload URL (HTTP ${genUrlResponse.status})${detail ? `: ${detail}` : ""}`);
+    }
+
+    const genUrlResult = await genUrlResponse.json() as { status?: string; value?: string; errorMessage?: string };
+    if (genUrlResult.status === "error" || !genUrlResult.value) {
+      throw new Error(`Failed to generate Convex upload URL: ${genUrlResult.errorMessage || "No upload URL returned"}`);
+    }
+    const uploadUrl = genUrlResult.value;
+
+    // 2. Upload video bytes to the upload URL
+    const uploadResponse = await fetchImpl(uploadUrl, {
       method: "POST",
       headers: {
-        accept: "application/json",
-        apikey: supabaseKey,
-        authorization: `Bearer ${supabaseKey}`,
-        "cache-control": "3600",
         "content-type": "video/mp4",
-        "x-upsert": "true",
       },
       body: new Uint8Array(bytes),
     });
 
-    if (!response.ok) {
+    if (!uploadResponse.ok) {
       let detail = "";
-      try {
-        detail = await response.text();
-      } catch {
-        // ignore
-      }
-      throw new Error(
-        `Failed to upload video to Supabase Storage (HTTP ${response.status})${detail ? `: ${detail}` : ""}`,
-      );
+      try { detail = await uploadResponse.text(); } catch {}
+      throw new Error(`Failed to upload video to Convex Storage (HTTP ${uploadResponse.status})${detail ? `: ${detail}` : ""}`);
     }
 
+    const uploadResult = await uploadResponse.json() as { storageId?: string };
+    const storageId = uploadResult.storageId;
+    if (!storageId) {
+      throw new Error("Convex upload succeeded but returned no storageId.");
+    }
+
+    // 3. Save file metadata in Convex database storedFiles table
+    const saveResponse = await fetchImpl(mutationUrl, {
+      method: "POST",
+      headers: authHeaders,
+      body: JSON.stringify({
+        path: "files:saveFile",
+        args: {
+          storageId,
+          bucket: convexBucket,
+          path: objectKey,
+          fileName,
+          contentType: "video/mp4",
+          size: bytes.length,
+          sha256,
+        },
+        format: "json",
+      }),
+    });
+
+    if (!saveResponse.ok) {
+      let detail = "";
+      try { detail = await saveResponse.text(); } catch {}
+      throw new Error(`Failed to save video metadata in Convex database (HTTP ${saveResponse.status})${detail ? `: ${detail}` : ""}`);
+    }
+
+    const saveResult = await saveResponse.json() as {
+      status?: string;
+      value?: { url?: string; storageId?: string };
+      errorMessage?: string;
+    };
+    if (saveResult.status === "error" || !saveResult.value) {
+      throw new Error(`Failed to save video metadata in Convex: ${saveResult.errorMessage || "Unknown error"}`);
+    }
+
+    const publicUrl = saveResult.value.url ?? `${convexUrl}/api/storage/${storageId}`;
+
     return {
-      provider: "supabase",
-      bucket: supabaseBucket,
+      provider: "convex",
+      bucket: convexBucket,
       objectKey,
       publicUrl,
       bytes: bytes.length,
       sha256,
+      storageId,
     };
   }
 
@@ -143,6 +219,6 @@ export async function uploadVideoToStorage(
   }
 
   throw new Error(
-    "Storage upload failed: no credentials configured. Set SUPABASE_SERVICE_ROLE_KEY or APPWRITE_API_KEY.",
+    "Storage upload failed: no credentials configured. Set CONVEX_URL or APPWRITE_API_KEY.",
   );
 }
