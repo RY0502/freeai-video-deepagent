@@ -2542,7 +2542,15 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
       let promptRevision: 1 | 3 | typeof AGNES_PROMPT_REVISION = AGNES_PROMPT_REVISION;
       let task: AgnesVideoTask;
 
-      if (isLegacyRetryableCapacityCheckpoint(checkpoint)) {
+      if (checkpoint && ["in_progress", "unknown"].includes(checkpoint.status) && !checkpoint.providerJob) {
+        checkpoint = await stateStore.resetCheckpointForRetry(
+          originalPrompt,
+          key,
+          checkpoint.error ?? "Previous Agnes POST had no video_id receipt; retrying submission.",
+          { ambiguousPostRecovered: true },
+          AGNES_VIDEO_MODEL,
+        );
+      } else if (isLegacyRetryableCapacityCheckpoint(checkpoint)) {
         checkpoint = await stateStore.resetCheckpointForRetry(
           originalPrompt,
           key,
@@ -2576,12 +2584,6 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
           progress: task.progress,
           keyLabel: task.keyLabel,
         });
-      } else if (checkpoint && ["in_progress", "unknown"].includes(checkpoint.status)) {
-        const reason = checkpoint.error
-          ?? "A previous Agnes POST may have been accepted, but no video_id was received. Automatic resubmission could create a duplicate.";
-        if (checkpoint.status !== "unknown") await stateStore.markUnknown(originalPrompt, key, reason);
-        invocationFailure = reason;
-        return json({ status: "unknown", reason, retrySafe: false, instruction: "Resolve the ambiguous submission manually before retrying." });
       } else if (checkpoint?.status === "failed" && checkpoint.retrySafe === false) {
         invocationFailure = checkpoint.error ?? "The accepted Agnes task failed terminally.";
         const event = await videoSnapshotEvent(checkpoint);
@@ -2655,17 +2657,6 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             await stateStore.deferCheckpoint(originalPrompt, key, message, next);
             invocationPending = message;
             return json({ status: "pending", reason: message, retryAt: next, allKeysExhausted: true });
-          }
-          if (!(error instanceof AgnesError) || error.ambiguousOutcome
-            || error.kind === "ambiguous_submission" || error.kind === "network" || error.kind === "provider") {
-            await stateStore.markUnknown(originalPrompt, key, message);
-            invocationFailure = message;
-            return json({
-              status: "unknown",
-              reason: message,
-              retrySafe: false,
-              instruction: "The POST outcome is ambiguous; automatic resubmission is blocked to prevent a duplicate render.",
-            });
           }
           await stateStore.failCheckpoint(originalPrompt, key, message, true);
           invocationFailure = message;

@@ -686,7 +686,7 @@ test("an Agnes task accepted with the legacy prompt digest resumes after the nat
   }
 });
 
-test("an ambiguous pre-receipt checkpoint is logged and never automatically resubmitted", async () => {
+test("an ambiguous pre-receipt checkpoint allows resubmission and submits the video", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agnes-video-ambiguous-"));
   const runId = new VideoRunStateStore(path.join(root, "placeholder")).promptHash(PROMPT);
   const runDirectory = path.join(root, runId);
@@ -705,15 +705,21 @@ test("an ambiguous pre-receipt checkpoint is logged and never automatically resu
       runDirectory,
       config: loadConfig({}),
       stateStore: state,
-      agnes: { async submitVideo() { submissions += 1; return task("queued", 0); } } as unknown as AgnesVideoClient,
+      agnes: {
+        async submitVideo() { submissions += 1; return task("queued", 0); },
+        async pollUntilTerminal(initial: AgnesVideoTask) {
+          return { outcome: "timed_out" as const, task: initial };
+        },
+      } as unknown as AgnesVideoClient,
       elevenLabs: {} as ElevenLabsClient,
       freeAiMusic: {} as FreeAiMusicClient,
     });
     const result = JSON.parse(String(await tool(bundle, VIDEO_TOOL_NAMES.generateVideo).invoke({}))) as Record<string, unknown>;
-    assert.equal(result.status, "unknown");
-    assert.equal(result.retrySafe, false);
-    assert.equal(submissions, 0);
-    assert.equal((await state.loadCheckpoint(PROMPT, videoCheckpointKeys.sourceVideo))?.status, "unknown");
+    assert.equal(result.status, "pending");
+    assert.equal(submissions, 1);
+    const checkpoint = await state.loadCheckpoint(PROMPT, videoCheckpointKeys.sourceVideo);
+    assert.equal(checkpoint?.attempt, 2);
+    assert.equal(checkpoint?.providerJob?.videoId, "video-stable");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
