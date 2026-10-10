@@ -243,3 +243,214 @@ test("findEligibleAutogenerateRuns ignores runs for which video is already gener
   }
 });
 
+test("isRunEligibleForAutogenerate handles failed runs according to retrySafe", () => {
+  const failedManifest = baseManifest("failed");
+
+  // When retrySafe is true
+  const retrySafeCheckpoint = {
+    [videoCheckpointKeys.sourceVideo]: {
+      schemaVersion: 2 as const,
+      status: "failed" as const,
+      attempt: 1,
+      startedAt: "2026-10-10T10:00:00.000Z",
+      updatedAt: "2026-10-10T10:01:00.000Z",
+      retrySafe: true,
+      error: "video queue is full, please retry later",
+    },
+  };
+  const retrySafeResult = isRunEligibleForAutogenerate(failedManifest, retrySafeCheckpoint);
+  assert.equal(retrySafeResult.eligible, true);
+  assert.equal(retrySafeResult.tier, "failed_retry_safe");
+  assert.equal(retrySafeResult.failureReason, "video queue is full, please retry later");
+
+  // When retrySafe is false
+  const retryUnsafeCheckpoint = {
+    [videoCheckpointKeys.sourceVideo]: {
+      schemaVersion: 2 as const,
+      status: "failed" as const,
+      attempt: 1,
+      startedAt: "2026-10-10T10:00:00.000Z",
+      updatedAt: "2026-10-10T10:01:00.000Z",
+      retrySafe: false,
+      error: "Permanent authorization failure",
+    },
+  };
+  const retryUnsafeResult = isRunEligibleForAutogenerate(failedManifest, retryUnsafeCheckpoint);
+  assert.equal(retryUnsafeResult.eligible, false);
+});
+
+test("findEligibleAutogenerateRuns prioritizes queued/in-progress runs over failed retry-safe runs", async () => {
+  const testRoot = path.join(tmpdir(), `auto-priority-test-${Date.now()}`);
+  await mkdir(testRoot, { recursive: true });
+
+  const failedRunId = "1111111111111111111111111111111111111111111111111111111111111111";
+  const inProgressRunId = "2222222222222222222222222222222222222222222222222222222222222222";
+
+  const failedDir = path.join(testRoot, failedRunId);
+  const inProgressDir = path.join(testRoot, inProgressRunId);
+  await mkdir(failedDir, { recursive: true });
+  await mkdir(inProgressDir, { recursive: true });
+
+  // Failed run is older (08:00) and retrySafe: true
+  await writeFile(path.join(failedDir, "run.json"), JSON.stringify({
+    schemaVersion: 2,
+    runId: failedRunId,
+    originalPrompt: "Failed prompt",
+    runDirectory: failedDir,
+    createdAt: "2026-10-10T08:00:00.000Z",
+    updatedAt: "2026-10-10T08:00:00.000Z",
+  }));
+  await writeFile(path.join(failedDir, "pipeline-state.json"), JSON.stringify({
+    schemaVersion: 2,
+    manifest: { ...baseManifest("failed"), createdAt: "2026-10-10T08:00:00.000Z" },
+    checkpoints: {
+      [videoCheckpointKeys.sourceVideo]: {
+        schemaVersion: 2,
+        status: "failed",
+        attempt: 1,
+        startedAt: "2026-10-10T08:00:00.000Z",
+        updatedAt: "2026-10-10T08:00:00.000Z",
+        retrySafe: true,
+        error: "video queue is full",
+      },
+    },
+  }));
+
+  // In-progress run is newer (10:00)
+  await writeFile(path.join(inProgressDir, "run.json"), JSON.stringify({
+    schemaVersion: 2,
+    runId: inProgressRunId,
+    originalPrompt: "In-progress prompt",
+    runDirectory: inProgressDir,
+    createdAt: "2026-10-10T10:00:00.000Z",
+    updatedAt: "2026-10-10T10:00:00.000Z",
+  }));
+  await writeFile(path.join(inProgressDir, "pipeline-state.json"), JSON.stringify({
+    schemaVersion: 2,
+    manifest: { ...baseManifest("generating"), createdAt: "2026-10-10T10:00:00.000Z" },
+    checkpoints: {
+      [videoCheckpointKeys.sourceVideo]: {
+        schemaVersion: 2,
+        status: "in_progress",
+        attempt: 1,
+        startedAt: "2026-10-10T10:00:00.000Z",
+        updatedAt: "2026-10-10T10:00:00.000Z",
+      },
+    },
+  }));
+
+  try {
+    const eligible = await findEligibleAutogenerateRuns(testRoot);
+    // Because an in-progress run exists, it takes strict priority over failed runs
+    assert.equal(eligible.length, 1);
+    assert.equal(eligible[0]?.runId, inProgressRunId);
+    assert.equal(eligible[0]?.tier, "queued_or_in_progress");
+  } finally {
+    await rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+test("findEligibleAutogenerateRuns falls back to failed retry-safe runs oldest first when no queued/in-progress runs exist", async () => {
+  const testRoot = path.join(tmpdir(), `auto-failed-fallback-test-${Date.now()}`);
+  await mkdir(testRoot, { recursive: true });
+
+  const newerFailedId = "1111111111111111111111111111111111111111111111111111111111111111";
+  const olderFailedId = "2222222222222222222222222222222222222222222222222222222222222222";
+  const unsafeFailedId = "3333333333333333333333333333333333333333333333333333333333333333";
+
+  const newerDir = path.join(testRoot, newerFailedId);
+  const olderDir = path.join(testRoot, olderFailedId);
+  const unsafeDir = path.join(testRoot, unsafeFailedId);
+  await mkdir(newerDir, { recursive: true });
+  await mkdir(olderDir, { recursive: true });
+  await mkdir(unsafeDir, { recursive: true });
+
+  // Newer failed run (10:00) with retrySafe: true
+  await writeFile(path.join(newerDir, "run.json"), JSON.stringify({
+    schemaVersion: 2,
+    runId: newerFailedId,
+    originalPrompt: "Newer failed prompt",
+    runDirectory: newerDir,
+    createdAt: "2026-10-10T10:00:00.000Z",
+    updatedAt: "2026-10-10T10:00:00.000Z",
+  }));
+  await writeFile(path.join(newerDir, "pipeline-state.json"), JSON.stringify({
+    schemaVersion: 2,
+    manifest: { ...baseManifest("failed"), createdAt: "2026-10-10T10:00:00.000Z" },
+    checkpoints: {
+      [videoCheckpointKeys.sourceVideo]: {
+        schemaVersion: 2,
+        status: "failed",
+        attempt: 1,
+        startedAt: "2026-10-10T10:00:00.000Z",
+        updatedAt: "2026-10-10T10:00:00.000Z",
+        retrySafe: true,
+        error: "video queue is full",
+      },
+    },
+  }));
+
+  // Older failed run (08:00) with retrySafe: true
+  await writeFile(path.join(olderDir, "run.json"), JSON.stringify({
+    schemaVersion: 2,
+    runId: olderFailedId,
+    originalPrompt: "Older failed prompt",
+    runDirectory: olderDir,
+    createdAt: "2026-10-10T08:00:00.000Z",
+    updatedAt: "2026-10-10T08:00:00.000Z",
+  }));
+  await writeFile(path.join(olderDir, "pipeline-state.json"), JSON.stringify({
+    schemaVersion: 2,
+    manifest: { ...baseManifest("failed"), createdAt: "2026-10-10T08:00:00.000Z" },
+    checkpoints: {
+      [videoCheckpointKeys.sourceVideo]: {
+        schemaVersion: 2,
+        status: "failed",
+        attempt: 1,
+        startedAt: "2026-10-10T08:00:00.000Z",
+        updatedAt: "2026-10-10T08:00:00.000Z",
+        retrySafe: true,
+        error: "video queue is full",
+      },
+    },
+  }));
+
+  // Terminal failed run (07:00) with retrySafe: false
+  await writeFile(path.join(unsafeDir, "run.json"), JSON.stringify({
+    schemaVersion: 2,
+    runId: unsafeFailedId,
+    originalPrompt: "Unsafe failed prompt",
+    runDirectory: unsafeDir,
+    createdAt: "2026-10-10T07:00:00.000Z",
+    updatedAt: "2026-10-10T07:00:00.000Z",
+  }));
+  await writeFile(path.join(unsafeDir, "pipeline-state.json"), JSON.stringify({
+    schemaVersion: 2,
+    manifest: { ...baseManifest("failed"), createdAt: "2026-10-10T07:00:00.000Z" },
+    checkpoints: {
+      [videoCheckpointKeys.sourceVideo]: {
+        schemaVersion: 2,
+        status: "failed",
+        attempt: 1,
+        startedAt: "2026-10-10T07:00:00.000Z",
+        updatedAt: "2026-10-10T07:00:00.000Z",
+        retrySafe: false,
+        error: "Terminal quota error",
+      },
+    },
+  }));
+
+  try {
+    const eligible = await findEligibleAutogenerateRuns(testRoot);
+    // Unsafe run is excluded. Oldest first: olderFailedId (08:00) comes before newerFailedId (10:00).
+    assert.equal(eligible.length, 2);
+    assert.equal(eligible[0]?.runId, olderFailedId);
+    assert.equal(eligible[0]?.tier, "failed_retry_safe");
+    assert.equal(eligible[1]?.runId, newerFailedId);
+    assert.equal(eligible[1]?.tier, "failed_retry_safe");
+  } finally {
+    await rm(testRoot, { recursive: true, force: true });
+  }
+});
+
+

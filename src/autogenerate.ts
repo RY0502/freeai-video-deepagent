@@ -12,24 +12,35 @@ export async function autogenerateMain(): Promise<void> {
   const config = loadConfig();
   const outputRoot = path.resolve(config.VIDEO_OUTPUT_ROOT);
 
-  console.log(`[autogenerate] Checking for pending Agnes runs in: ${outputRoot}`);
+  console.log(`[autogenerate] Checking for pending/retryable Agnes runs in: ${outputRoot}`);
   const eligibleRuns = await findEligibleAutogenerateRuns(outputRoot);
 
   if (eligibleRuns.length === 0) {
-    console.log("[autogenerate] No pending Agnes runs found to auto-generate.");
+    console.log("[autogenerate] No queued, in-progress, or retry-safe failed Agnes runs found to auto-generate.");
     return;
   }
 
   const selected = eligibleRuns[0];
   if (!selected) {
-    console.log("[autogenerate] No pending Agnes runs found to auto-generate.");
+    console.log("[autogenerate] No queued, in-progress, or retry-safe failed Agnes runs found to auto-generate.");
     return;
   }
-  console.log(`[autogenerate] Found ${eligibleRuns.length} eligible run(s).`);
-  console.log(
-    `[autogenerate] Processing oldest eligible run: ${selected.runId} ` +
-    `(created: ${selected.createdAt}, manifest: ${selected.manifestStatus}, sourceStatus: ${selected.sourceStatus ?? "none"}, hasProviderJob: ${selected.hasProviderJob})`
-  );
+
+  if (selected.tier === "queued_or_in_progress") {
+    console.log(`[autogenerate] Found ${eligibleRuns.length} queued/in-progress run(s).`);
+    console.log(
+      `[autogenerate] Processing oldest queued/in-progress run: ${selected.runId} ` +
+      `(created: ${selected.createdAt}, manifest: ${selected.manifestStatus}, sourceStatus: ${selected.sourceStatus ?? "none"}, hasProviderJob: ${selected.hasProviderJob})`
+    );
+  } else {
+    console.log(
+      `[autogenerate] No queued or in-progress runs found. Found ${eligibleRuns.length} failed retry-safe run(s).`
+    );
+    console.log(
+      `[autogenerate] Rerunning oldest failed retry-safe run: ${selected.runId} ` +
+      `(created: ${selected.createdAt}, manifest: ${selected.manifestStatus}, sourceStatus: ${selected.sourceStatus ?? "none"}, reason: "${selected.failureReason ?? "unknown"}")`
+    );
+  }
   console.log(`[autogenerate] Original prompt: "${selected.originalPrompt}"`);
 
   // Double-check if video is already generated on disk for this run
