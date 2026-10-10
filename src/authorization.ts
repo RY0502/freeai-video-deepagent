@@ -8,6 +8,14 @@ export function stripYouTubeUploadAuthorization(prompt: string): string {
     : trimmed;
 }
 
+/** Remove reference URLs block and raw URLs before deriving prompt narrative or metadata. */
+export function stripReferenceUrls(prompt: string): string {
+  return prompt
+    .replace(/\bReference urls:[\s\S]*?(?=(?:\n\s*(?:Perform cleanup|\. Perform cleanup|\[\[host-authorized))|$)/i, "")
+    .replace(/https?:\/\/[^\s<>"'`]+/gi, "")
+    .trim();
+}
+
 /**
  * Bind an explicit CLI capability to the immutable prompt/run hash. User text
  * cannot manufacture the reserved marker: every new CLI run passes through

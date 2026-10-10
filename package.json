@@ -12,6 +12,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/cli.ts",
+    "autogenerate": "tsx src/autogenerate.ts",
     "start": "node dist/src/cli.js",
     "media:smoke": "node --import tsx scripts/media-smoke.ts",
     "test": "node --import tsx --test test/*.test.ts",

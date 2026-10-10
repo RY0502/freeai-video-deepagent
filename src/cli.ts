@@ -580,9 +580,9 @@ async function assembleCompletedVideoIfReady(options: {
   return true;
 }
 
-async function main(): Promise<void> {
+export async function runCli(rawArgs: string[] = process.argv.slice(2)): Promise<void> {
   const initialCwd = process.cwd();
-  const command = parseCliArgs(process.argv.slice(2));
+  const command = parseCliArgs(rawArgs);
   if (command.kind === "help") {
     console.log(CLI_HELP);
     return;
@@ -903,7 +903,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   process.once("SIGINT", handleTerminationSignal);
   process.once("SIGTERM", handleTerminationSignal);
 
-  main().catch((error) => {
+  runCli().catch((error) => {
     console.error(`Video agent failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
   }).finally(async () => {

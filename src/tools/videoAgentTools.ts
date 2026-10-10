@@ -5,7 +5,10 @@ import path from "node:path";
 import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 
-import { stripYouTubeUploadAuthorization } from "../authorization.js";
+import {
+  stripReferenceUrls,
+  stripYouTubeUploadAuthorization,
+} from "../authorization.js";
 import {
   AGNES_VIDEO_MODEL,
   AgnesError,
@@ -1743,7 +1746,10 @@ function isAgnesControlInstructionRevision3(fragment: string): boolean {
 }
 
 function isAgnesControlInstruction(fragment: string): boolean {
-  return isAgnesControlInstructionRevision3(fragment);
+  if (isAgnesControlInstructionRevision3(fragment)) return true;
+  const normalized = fragment.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+  if (/^reference\s+urls?:/i.test(normalized) || /^https?:\/\//i.test(normalized)) return true;
+  return false;
 }
 
 function stripEditorialMusicDirection(fragment: string): string {
@@ -1814,8 +1820,9 @@ export function agnesVideoPromptRevision3(plan: VideoPlan): string {
 }
 
 export function agnesVideoPrompt(plan: VideoPlan, originalPrompt = ""): string {
-  const sourceIntent = originalPrompt.trim()
-    ? `Binding original user intent: ${stripYouTubeUploadAuthorization(originalPrompt)}. Preserve its explicit subjects, causal order, dialogue, and diegetic sounds; when it is too dense for ${plan.totalDurationSeconds} seconds, follow the condensed timeline below for pacing.`
+  const cleanOriginal = stripReferenceUrls(stripYouTubeUploadAuthorization(originalPrompt)).trim();
+  const sourceIntent = cleanOriginal
+    ? `Binding original user intent: ${cleanOriginal}. Preserve its explicit subjects, causal order, dialogue, and diegetic sounds; when it is too dense for ${plan.totalDurationSeconds} seconds, follow the condensed timeline below for pacing.`
     : "";
   return sanitizeAgnesVideoPrompt([
     sourceIntent,

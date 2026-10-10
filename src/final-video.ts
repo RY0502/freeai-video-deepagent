@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import path from "node:path";
 
-import { stripYouTubeUploadAuthorization } from "./authorization.js";
+import {
+  stripReferenceUrls,
+  stripYouTubeUploadAuthorization,
+} from "./authorization.js";
 
 const MAX_STEM_BYTES = 96;
 const LEGACY_FINAL_VIDEO_NAME = /^final(?:-\d+)?\.mp4$/;
@@ -34,7 +37,7 @@ function requireAttempt(attempt: number): void {
  * shell metacharacters, Windows-reserved punctuation, and trailing dots/spaces.
  */
 export function finalVideoStem(originalPrompt: string): string {
-  const visiblePrompt = stripYouTubeUploadAuthorization(originalPrompt);
+  const visiblePrompt = stripReferenceUrls(stripYouTubeUploadAuthorization(originalPrompt));
   const descriptivePrompt = visiblePrompt
     .replace(
       /^(?:please\s+)?(?:create|make|generate|produce|render)\s+(?:(?:me|us)\s+)?(?:(?:a|an|the)\s+)?/iu,
