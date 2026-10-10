@@ -57,11 +57,11 @@ function sourceAudioInspection(
     durationSeconds: 4,
     audioStream: usable
       ? {
-          codecName: "aac",
-          sampleRate: 48_000,
-          channels: 2,
-          durationSeconds: 4,
-        }
+        codecName: "aac",
+        sampleRate: 48_000,
+        channels: 2,
+        durationSeconds: 4,
+      }
       : null,
     thresholds: {
       silenceDbfs: SOURCE_AUDIO_SILENCE_THRESHOLD_DBFS,
@@ -370,28 +370,30 @@ test("a no-stream Agnes source falls back to vision-synced ElevenLabs Foley at g
     const foleyVision: FoleyVisionClient = {
       async analyze() {
         return {
-          text: JSON.stringify({ cues: [
-            {
-              cueId: "bat-contact",
-              visible: true,
-              matchesPlannedCause: true,
-              observedAtSeconds: 1,
-              confidence: 0.98,
-              observedAction: "The wooden bat first contacts the cricket ball.",
-              soundDescription: "one dry close wooden crack with a short natural decay",
-              reason: "The contact frame is clear.",
-            },
-            {
-              cueId: "crowd-roar",
-              visible: true,
-              matchesPlannedCause: true,
-              observedAtSeconds: 3.1,
-              confidence: 0.96,
-              observedAction: "The visible crowd rises together in celebration.",
-              soundDescription: "one broad stadium cheer from a large mid-distance crowd",
-              reason: "The crowd reaction is clear.",
-            },
-          ] }),
+          text: JSON.stringify({
+            cues: [
+              {
+                cueId: "bat-contact",
+                visible: true,
+                matchesPlannedCause: true,
+                observedAtSeconds: 1,
+                confidence: 0.98,
+                observedAction: "The wooden bat first contacts the cricket ball.",
+                soundDescription: "one dry close wooden crack with a short natural decay",
+                reason: "The contact frame is clear.",
+              },
+              {
+                cueId: "crowd-roar",
+                visible: true,
+                matchesPlannedCause: true,
+                observedAtSeconds: 3.1,
+                confidence: 0.96,
+                observedAction: "The visible crowd rises together in celebration.",
+                soundDescription: "one broad stadium cheer from a large mid-distance crowd",
+                reason: "The crowd reaction is clear.",
+              },
+            ]
+          }),
           provider: "test-vision",
           model: "test-vlm",
         };

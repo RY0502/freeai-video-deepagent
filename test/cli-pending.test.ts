@@ -86,17 +86,17 @@ function completed(path: string): ArtifactCheckpoint {
       ? { provider: "free.ai", model: "ace-step" }
       : path.endsWith("/foley-mix.wav")
         ? {
-            provider: "elevenlabs+local",
-            model: "eleven_text_to_sound_v2+ffmpeg",
-            details: {
-              audioMixRevision: AUDIO_MIX_REVISION,
-              sourceAudioInspectionRevision: SOURCE_AUDIO_INSPECTION_REVISION,
-              sourceAudioAnalysisSha256: SOURCE_AUDIO_ANALYSIS_SHA256,
-              foleyReconciliationRevision: FOLEY_RECONCILIATION_REVISION,
-              foleyReconciliationSha256: "f".repeat(64),
-              sourceVideoSha256: SOURCE_SHA256,
-            },
-          }
+          provider: "elevenlabs+local",
+          model: "eleven_text_to_sound_v2+ffmpeg",
+          details: {
+            audioMixRevision: AUDIO_MIX_REVISION,
+            sourceAudioInspectionRevision: SOURCE_AUDIO_INSPECTION_REVISION,
+            sourceAudioAnalysisSha256: SOURCE_AUDIO_ANALYSIS_SHA256,
+            foleyReconciliationRevision: FOLEY_RECONCILIATION_REVISION,
+            foleyReconciliationSha256: "f".repeat(64),
+            sourceVideoSha256: SOURCE_SHA256,
+          },
+        }
         : {}),
   });
 }

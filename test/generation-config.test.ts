@@ -98,27 +98,27 @@ function currentPlan(musicEnabled = true): VideoPlan {
     }],
     music: musicEnabled
       ? {
-          enabled: true,
-          prompt: 'A restrained pop underscore that follows the complete seven-second visual story.',
-          negativePrompt: 'No vocals, Foley, creature sounds, engines, weather, or loud transients.',
-          durationSeconds: 7,
-          genre: 'pop',
-          tempoBpm: 120,
-          featuredInstrument: 'piano',
-          mood: 'Bright forward motion with a gentle curious finish',
-          role: 'background',
-          syncStrategy: 'Use two connected phrases matching the approach and reflection windows.',
-          beats: beats.map((beat) => ({
-            beatId: beat.beatId,
-            startSeconds: beat.startSeconds,
-            endSeconds: beat.endSeconds,
-            direction: `Support the ${beat.beatId} window quietly beneath the foreground sound.`,
-          })),
-        }
+        enabled: true,
+        prompt: 'A restrained pop underscore that follows the complete seven-second visual story.',
+        negativePrompt: 'No vocals, Foley, creature sounds, engines, weather, or loud transients.',
+        durationSeconds: 7,
+        genre: 'pop',
+        tempoBpm: 120,
+        featuredInstrument: 'piano',
+        mood: 'Bright forward motion with a gentle curious finish',
+        role: 'background',
+        syncStrategy: 'Use two connected phrases matching the approach and reflection windows.',
+        beats: beats.map((beat) => ({
+          beatId: beat.beatId,
+          startSeconds: beat.startSeconds,
+          endSeconds: beat.endSeconds,
+          direction: `Support the ${beat.beatId} window quietly beneath the foreground sound.`,
+        })),
+      }
       : {
-          enabled: false,
-          reason: 'The user explicitly requested synchronized Foley without any background music.',
-        },
+        enabled: false,
+        reason: 'The user explicitly requested synchronized Foley without any background music.',
+      },
     delivery: {
       visualStyle: 'animation',
       aspectRatio: '16:9',
@@ -180,8 +180,8 @@ test('YouTube runtime becomes configurable only with the complete OAuth environm
 test('explicit prompt controls are resolved globally for the one provider render', () => {
   const preferences = resolvePromptPreferencesForConfig(
     'Create an animation video. Aspect ratio: 16:9. Camera motion: slow pan left. '
-      + 'Negative prompt: no captions, no duplicate cats. Use pop background music at 120 BPM featuring piano. '
-      + 'Clean up after successful generation.',
+    + 'Negative prompt: no captions, no duplicate cats. Use pop background music at 120 BPM featuring piano. '
+    + 'Clean up after successful generation.',
     loadConfig({}),
   );
 

@@ -554,12 +554,12 @@ test("startup reconciliation replaces a completed track from the previous music 
     loadPlan: async () => plan(true),
     loadCheckpoint: async (_prompt: string, key: string) => key === videoCheckpointKeys.music
       ? checkpoint({
-          status: "completed",
-          path: "/local/audio/music.mp3",
-          sha256: "c".repeat(64),
-          provider: "elevenlabs",
-          model: "music_v2",
-        })
+        status: "completed",
+        path: "/local/audio/music.mp3",
+        sha256: "c".repeat(64),
+        provider: "elevenlabs",
+        model: "music_v2",
+      })
       : null,
   } as unknown as VideoRunStateStore;
   const invoked: string[] = [];
@@ -584,13 +584,13 @@ test("startup reconciliation resumes a retained Free.ai music download URL", asy
     loadPlan: async () => plan(true),
     loadCheckpoint: async (_prompt: string, key: string) => key === videoCheckpointKeys.music
       ? checkpoint({
-          status: "in_progress",
-          provider: "free.ai",
-          model: "ace-step",
-          url: "https://media.example/music.wav",
-          externalId: "music-accepted",
-          details: { submissionAccepted: true },
-        })
+        status: "in_progress",
+        provider: "free.ai",
+        model: "ace-step",
+        url: "https://media.example/music.wav",
+        externalId: "music-accepted",
+        details: { submissionAccepted: true },
+      })
       : null,
   } as unknown as VideoRunStateStore;
   const invoked: string[] = [];
@@ -615,14 +615,14 @@ test("startup reconciliation never retries durably skipped music, even with a st
     loadPlan: async () => plan(true),
     loadCheckpoint: async (_prompt: string, key: string) => key === videoCheckpointKeys.music
       ? checkpoint({
-          status: "skipped",
-          provider: "free.ai",
-          model: "ace-step",
-          url: "https://media.example/stale-accepted-url.wav",
-          retrySafe: false,
-          error: "Music remained unavailable after the bounded attempt cycle.",
-          details: { optionalArtifactOmitted: true, foleyOnlyFallback: true },
-        })
+        status: "skipped",
+        provider: "free.ai",
+        model: "ace-step",
+        url: "https://media.example/stale-accepted-url.wav",
+        retrySafe: false,
+        error: "Music remained unavailable after the bounded attempt cycle.",
+        details: { optionalArtifactOmitted: true, foleyOnlyFallback: true },
+      })
       : null,
   } as unknown as VideoRunStateStore;
   const invoked: string[] = [];

@@ -181,19 +181,19 @@ export interface ResolvedGenerationConfiguration {
     intensityGain: Readonly<Record<TimedFoleyCue["intensity"], number>>;
   };
   music:
-    | { enabled: false }
-    | {
-        enabled: true;
-        provider: "free.ai";
-        model: typeof FREE_AI_MUSIC_MODEL;
-        durationSeconds: number;
-        providerDurationSeconds: number;
-        genre: string;
-        mood: string;
-        tempoBpm: number;
-        featuredInstrument?: string;
-        role: "background";
-      };
+  | { enabled: false }
+  | {
+    enabled: true;
+    provider: "free.ai";
+    model: typeof FREE_AI_MUSIC_MODEL;
+    durationSeconds: number;
+    providerDurationSeconds: number;
+    genre: string;
+    mood: string;
+    tempoBpm: number;
+    featuredInstrument?: string;
+    role: "background";
+  };
   assembly: {
     container: "mp4";
     videoCodec: "h264";
@@ -368,17 +368,17 @@ export function resolveGenerationConfiguration(
     },
     music: music
       ? {
-          enabled: true,
-          provider: "free.ai",
-          model: FREE_AI_MUSIC_MODEL,
-          durationSeconds: plan.totalDurationSeconds,
-          providerDurationSeconds: freeAiMusicDurationSeconds(plan),
-          genre: music.genre,
-          mood: music.mood,
-          tempoBpm: music.tempoBpm,
-          ...(music.featuredInstrument ? { featuredInstrument: music.featuredInstrument } : {}),
-          role: "background",
-        }
+        enabled: true,
+        provider: "free.ai",
+        model: FREE_AI_MUSIC_MODEL,
+        durationSeconds: plan.totalDurationSeconds,
+        providerDurationSeconds: freeAiMusicDurationSeconds(plan),
+        genre: music.genre,
+        mood: music.mood,
+        tempoBpm: music.tempoBpm,
+        ...(music.featuredInstrument ? { featuredInstrument: music.featuredInstrument } : {}),
+        role: "background",
+      }
       : { enabled: false },
     assembly: {
       container: "mp4",
@@ -901,7 +901,7 @@ export async function completedFoleyArtifactIsValid(
       || (
         checkpoint?.details?.sourceVideoSha256 === expectedDependencies.sourceVideoSha256
         && checkpoint.details?.sourceAudioAnalysisSha256
-          === expectedDependencies.sourceAudioAnalysisSha256
+        === expectedDependencies.sourceAudioAnalysisSha256
       )
     )
     && await completedArtifactIsValid(checkpoint);
@@ -958,31 +958,31 @@ export function finalAudioMixRevisionIsCurrent(
   const musicSha256 = checkpoint?.details?.musicSha256;
   const musicReceiptIsCurrent = musicDependencyStatus === "included"
     ? typeof musicSha256 === "string"
-      && /^[a-f0-9]{64}$/.test(musicSha256)
-      && checkpoint?.details?.backgroundMusicIncluded === true
-      && checkpoint.details?.backgroundMusicRequested === true
-      && checkpoint.details?.foleyOnlyFallback === false
+    && /^[a-f0-9]{64}$/.test(musicSha256)
+    && checkpoint?.details?.backgroundMusicIncluded === true
+    && checkpoint.details?.backgroundMusicRequested === true
+    && checkpoint.details?.foleyOnlyFallback === false
     : (musicDependencyStatus === "skipped" || musicDependencyStatus === "disabled")
-      && (musicSha256 === null || musicSha256 === undefined)
-      && checkpoint?.details?.backgroundMusicIncluded === false
-      && (
-        musicDependencyStatus === "disabled"
-        || (
-          checkpoint.details?.backgroundMusicRequested === true
-          && checkpoint.details?.foleyOnlyFallback === true
-        )
-      );
+    && (musicSha256 === null || musicSha256 === undefined)
+    && checkpoint?.details?.backgroundMusicIncluded === false
+    && (
+      musicDependencyStatus === "disabled"
+      || (
+        checkpoint.details?.backgroundMusicRequested === true
+        && checkpoint.details?.foleyOnlyFallback === true
+      )
+    );
   const foregroundAudioMode = checkpoint?.details?.foregroundAudioMode;
   const foregroundReceiptIsCurrent = foregroundAudioMode === "agnes_native"
     ? checkpoint?.details?.foleySha256 === null
-      && checkpoint.details?.foleyReconciliationRevision === null
-      && checkpoint.details?.foleyReconciliationSha256 === null
+    && checkpoint.details?.foleyReconciliationRevision === null
+    && checkpoint.details?.foleyReconciliationSha256 === null
     : foregroundAudioMode === "elevenlabs_foley"
-      && typeof checkpoint?.details?.foleySha256 === "string"
-      && /^[a-f0-9]{64}$/.test(checkpoint.details.foleySha256)
-      && checkpoint.details?.foleyReconciliationRevision === FOLEY_RECONCILIATION_REVISION
-      && typeof checkpoint.details?.foleyReconciliationSha256 === "string"
-      && /^[a-f0-9]{64}$/.test(checkpoint.details.foleyReconciliationSha256);
+    && typeof checkpoint?.details?.foleySha256 === "string"
+    && /^[a-f0-9]{64}$/.test(checkpoint.details.foleySha256)
+    && checkpoint.details?.foleyReconciliationRevision === FOLEY_RECONCILIATION_REVISION
+    && typeof checkpoint.details?.foleyReconciliationSha256 === "string"
+    && /^[a-f0-9]{64}$/.test(checkpoint.details.foleyReconciliationSha256);
   return checkpoint?.provider === "local"
     && checkpoint.model === "ffmpeg-static"
     && checkpoint.details?.audioMixRevision === AUDIO_MIX_REVISION
@@ -1001,19 +1001,19 @@ export type FinalMusicDependencyStatus = "included" | "skipped" | "disabled";
 
 export type ForegroundArtifactDependencies =
   | {
-      foregroundAudioMode: "agnes_native";
-      sourceVideoSha256: string;
-      sourceAudioAnalysisSha256: string;
-      foleySha256: null;
-      reconciliationSha256: null;
-    }
+    foregroundAudioMode: "agnes_native";
+    sourceVideoSha256: string;
+    sourceAudioAnalysisSha256: string;
+    foleySha256: null;
+    reconciliationSha256: null;
+  }
   | {
-      foregroundAudioMode: "elevenlabs_foley";
-      sourceVideoSha256: string;
-      sourceAudioAnalysisSha256: string;
-      foleySha256: string;
-      reconciliationSha256: string;
-    };
+    foregroundAudioMode: "elevenlabs_foley";
+    sourceVideoSha256: string;
+    sourceAudioAnalysisSha256: string;
+    foleySha256: string;
+    reconciliationSha256: string;
+  };
 
 export type FinalArtifactDependencies = ForegroundArtifactDependencies & {
   musicDependencyStatus: FinalMusicDependencyStatus;
@@ -1699,7 +1699,7 @@ export function legacyAgnesVideoPrompt(plan: VideoPlan): string {
   const bible = plan.continuityBible;
   const subjects = bible.subjects.map((subject) =>
     `${subject.id} (${subject.role}): ${subject.invariantAppearance}; `
-      + `surface/wardrobe ${subject.wardrobeOrSurface}; identity anchors ${subject.identityAnchors.join(", ")}`,
+    + `surface/wardrobe ${subject.wardrobeOrSurface}; identity anchors ${subject.identityAnchors.join(", ")}`,
   );
   return [
     `Create one continuous ${plan.totalDurationSeconds}-second ${plan.delivery.visualStyle} video, ${plan.delivery.aspectRatio}.`,
@@ -1714,7 +1714,7 @@ export function legacyAgnesVideoPrompt(plan: VideoPlan): string {
     "Follow these broad continuous action windows. In each window, show anticipation, one clear dominant peak, and enough aftermath to read the result; timing is best-effort rather than frame-exact:",
     ...plan.timelineBeats.map((beat) =>
       `${beat.startSeconds.toFixed(2)}-${beat.endSeconds.toFixed(2)}s [${beat.beatId}]: `
-        + `${beat.visualAction} Camera: ${beat.cameraDirection}. Composition: ${beat.composition}`,
+      + `${beat.visualAction} Camera: ${beat.cameraDirection}. Composition: ${beat.composition}`,
     ),
     "The bracketed cue times already embedded in those beat directions mark intended visual peaks. Do not add extra actions or repeat the cue list; prioritize simple, sequential, physically readable choreography.",
     `Supporting anchors: ${bible.supportingAnchors.join("; ")}.`,
@@ -2446,9 +2446,9 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
         if (error instanceof VideoPlanDraftTransportError || error instanceof z.ZodError) {
           const issues = error instanceof z.ZodError
             ? error.issues.slice(0, 6).map((issue) => ({
-                path: issue.path.length > 0 ? issue.path.join(".") : "plan",
-                message: issue.message.slice(0, 240),
-              }))
+              path: issue.path.length > 0 ? issue.path.join(".") : "plan",
+              message: issue.message.slice(0, 240),
+            }))
             : [{ path: "plan", message: error.message.slice(0, 500) }];
           const message = issues.map(({ path: issuePath, message: issueMessage }) =>
             `${issuePath}: ${issueMessage}`).join("; ");
@@ -2975,10 +2975,10 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
           : null;
         retainedSupersededStem = await nonEmptyLocalFile(outputPath)
           ? path.join(
-              path.dirname(outputPath),
-              `foley-mix.superseded-r${previousRevision ?? "unknown"}`
-                + `-attempt${existing.attempt}-${randomBytes(4).toString("hex")}.wav`,
-            )
+            path.dirname(outputPath),
+            `foley-mix.superseded-r${previousRevision ?? "unknown"}`
+            + `-attempt${existing.attempt}-${randomBytes(4).toString("hex")}.wav`,
+          )
           : null;
         if (retainedSupersededStem) await rename(outputPath, retainedSupersededStem);
         existing = await stateStore.resetCheckpointForRetry(
@@ -3663,10 +3663,10 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
             foregroundAudio: foregroundBinding?.mode === "agnes_native"
               ? { kind: "native" }
               : {
-                  kind: "foley",
-                  path: (foregroundBinding as CurrentFoleyBinding).foley.path as string,
-                  volume: config.VIDEO_FOLEY_VOLUME,
-                },
+                kind: "foley",
+                path: (foregroundBinding as CurrentFoleyBinding).foley.path as string,
+                volume: config.VIDEO_FOLEY_VOLUME,
+              },
           }],
           ...(musicAvailable && music?.path ? { musicPath: music.path } : {}),
           outputPath: partialPath,

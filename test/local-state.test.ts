@@ -107,28 +107,28 @@ function continuousPlan(musicEnabled = true): VideoPlan {
     foleyCues: [],
     music: musicEnabled
       ? {
-          enabled: true,
-          prompt: "A restrained cinematic sports underscore that builds gently toward the boundary-shot payoff.",
-          negativePrompt: "No vocals, crowd, impacts, bat sounds, or distracting heavy bass.",
-          genre: "cinematic orchestral",
-          mood: "Focused anticipation resolving into warm triumph",
-          role: "background",
-          tempoBpm: 104,
-          syncStrategy: "Build quietly through setup and lift only after the visible boundary clearance.",
-          durationSeconds: 8,
-          beats: timelineBeats.map(({ beatId, startSeconds, endSeconds }) => ({
-            beatId,
-            startSeconds,
-            endSeconds,
-            direction: beatId === "setup"
-              ? "Sparse pulse and soft strings create restrained anticipation under the foreground effects."
-              : "A modest harmonic lift supports the payoff without masking the crowd or impact sounds.",
-          })),
-        }
+        enabled: true,
+        prompt: "A restrained cinematic sports underscore that builds gently toward the boundary-shot payoff.",
+        negativePrompt: "No vocals, crowd, impacts, bat sounds, or distracting heavy bass.",
+        genre: "cinematic orchestral",
+        mood: "Focused anticipation resolving into warm triumph",
+        role: "background",
+        tempoBpm: 104,
+        syncStrategy: "Build quietly through setup and lift only after the visible boundary clearance.",
+        durationSeconds: 8,
+        beats: timelineBeats.map(({ beatId, startSeconds, endSeconds }) => ({
+          beatId,
+          startSeconds,
+          endSeconds,
+          direction: beatId === "setup"
+            ? "Sparse pulse and soft strings create restrained anticipation under the foreground effects."
+            : "A modest harmonic lift supports the payoff without masking the crowd or impact sounds.",
+        })),
+      }
       : {
-          enabled: false,
-          reason: "The prompt explicitly requests foreground sound effects without background music.",
-        },
+        enabled: false,
+        reason: "The prompt explicitly requests foreground sound effects without background music.",
+      },
     delivery: {
       visualStyle: "cinematic",
       aspectRatio: "16:9",

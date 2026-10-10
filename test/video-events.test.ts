@@ -87,11 +87,11 @@ function sourceAudioInspectionDocument(
     durationSeconds: 4,
     audioStream: usable
       ? {
-          codecName: "aac",
-          sampleRate: 48_000,
-          channels: 2,
-          durationSeconds: 4,
-        }
+        codecName: "aac",
+        sampleRate: 48_000,
+        channels: 2,
+        durationSeconds: 4,
+      }
       : null,
     thresholds: {
       silenceDbfs: SOURCE_AUDIO_SILENCE_THRESHOLD_DBFS,
@@ -1003,7 +1003,7 @@ test("music tool replaces a legacy track with logged Free.ai retries and a WAV c
       agnes: {} as AgnesVideoClient,
       elevenLabs: {} as ElevenLabsClient,
       freeAiMusic,
-      validateMusicArtifact: async () => {},
+      validateMusicArtifact: async () => { },
       onEvent: (event) => events.push(event),
     });
 
@@ -1186,7 +1186,7 @@ test("an interrupted accepted Free.ai URL resumes only its download", async () =
       agnes: {} as AgnesVideoClient,
       elevenLabs: {} as ElevenLabsClient,
       freeAiMusic,
-      validateMusicArtifact: async () => {},
+      validateMusicArtifact: async () => { },
     });
     const result = JSON.parse(String(
       await tool(bundle, VIDEO_TOOL_NAMES.generateMusic).invoke({}),

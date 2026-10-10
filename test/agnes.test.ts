@@ -213,42 +213,42 @@ test("does not rotate authentication, validation, network, 5xx, or ambiguous suc
     response?: () => Response;
     networkError?: Error;
   }> = [
-    {
-      expectedKind: "authentication",
-      expectedAmbiguous: false,
-      response: () => jsonResponse({ error: { code: "invalid_api_key", message: "Invalid key" } }, 401),
-    },
-    {
-      expectedKind: "authentication",
-      expectedAmbiguous: false,
-      response: () => jsonResponse({ error: "Invalid key; video queue is full" }, 401),
-    },
-    {
-      expectedKind: "validation",
-      expectedAmbiguous: false,
-      response: () => jsonResponse({ error: { code: "validation_error", message: "Bad prompt" } }, 422),
-    },
-    {
-      expectedKind: "network",
-      expectedAmbiguous: true,
-      networkError: new Error("socket reset while using first-secret"),
-    },
-    {
-      expectedKind: "provider",
-      expectedAmbiguous: true,
-      response: () => jsonResponse({ code: "rate_limit", message: "Internal rate limiter failed" }, 503),
-    },
-    {
-      expectedKind: "provider",
-      expectedAmbiguous: true,
-      response: () => jsonResponse({ code: "server_error", message: "Internal server error" }, 503),
-    },
-    {
-      expectedKind: "ambiguous_submission",
-      expectedAmbiguous: true,
-      response: () => jsonResponse({ status: "accepted maybe", message: "Please check later" }),
-    },
-  ];
+      {
+        expectedKind: "authentication",
+        expectedAmbiguous: false,
+        response: () => jsonResponse({ error: { code: "invalid_api_key", message: "Invalid key" } }, 401),
+      },
+      {
+        expectedKind: "authentication",
+        expectedAmbiguous: false,
+        response: () => jsonResponse({ error: "Invalid key; video queue is full" }, 401),
+      },
+      {
+        expectedKind: "validation",
+        expectedAmbiguous: false,
+        response: () => jsonResponse({ error: { code: "validation_error", message: "Bad prompt" } }, 422),
+      },
+      {
+        expectedKind: "network",
+        expectedAmbiguous: true,
+        networkError: new Error("socket reset while using first-secret"),
+      },
+      {
+        expectedKind: "provider",
+        expectedAmbiguous: true,
+        response: () => jsonResponse({ code: "rate_limit", message: "Internal rate limiter failed" }, 503),
+      },
+      {
+        expectedKind: "provider",
+        expectedAmbiguous: true,
+        response: () => jsonResponse({ code: "server_error", message: "Internal server error" }, 503),
+      },
+      {
+        expectedKind: "ambiguous_submission",
+        expectedAmbiguous: true,
+        response: () => jsonResponse({ status: "accepted maybe", message: "Please check later" }),
+      },
+    ];
 
   for (const scenario of cases) {
     let calls = 0;
@@ -313,8 +313,193 @@ test("treats an explicit queue-full response without a task ID as a safe later r
       return true;
     },
   );
-  assert.equal(calls, 11);
+  assert.equal(calls, 22);
   assert.deepEqual(delays, Array(10).fill(30_000));
+});
+
+test("rotates to next key immediately on queue-full response and succeeds without capacity retry delay", async () => {
+  let calls = 0;
+  const labels: string[] = [];
+  const delays: number[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["first-key", "second-key"],
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async () => {
+      calls += 1;
+      if (calls === 1) {
+        return jsonResponse({
+          code: "video_queue_full",
+          message: "video queue is full, please retry later",
+        }, 503);
+      }
+      return jsonResponse({
+        video_id: "vid-second-key-success",
+        task_id: "task-second-key-success",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "A drone shot over rolling green hills",
+    seconds: 8,
+    aspectRatio: "16:9",
+    onAttempt: ({ keyLabel }) => labels.push(keyLabel),
+  });
+
+  assert.equal(calls, 2);
+  assert.deepEqual(labels, ["key-1", "key-2"]);
+  assert.equal(task.video_id, "vid-second-key-success");
+  assert.equal(task.keyLabel, "key-2");
+  assert.deepEqual(delays, []);
+});
+
+test("cycles through multiple keys on queue full and succeeds on key-2 during retry cycle", async () => {
+  let calls = 0;
+  const labels: string[] = [];
+  const delays: number[] = [];
+  const retryEvents: unknown[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["first-key", "second-key"],
+    capacityMaxRetries: 2,
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async () => {
+      calls += 1;
+      // Cycle 0: key-1 (call 1) fails, key-2 (call 2) fails
+      // Sleep
+      // Cycle 1: key-1 (call 3) fails, key-2 (call 4) succeeds
+      if (calls < 4) {
+        return jsonResponse({
+          code: "queue_full",
+          message: "submission queue is full, please retry later",
+        }, 503);
+      }
+      return jsonResponse({
+        video_id: "vid-cycle-1-key-2",
+        task_id: "task-cycle-1-key-2",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "Ocean waves crashing on rocky cliffs",
+    seconds: 6,
+    aspectRatio: "16:9",
+    onAttempt: ({ keyLabel }) => labels.push(keyLabel),
+    onCapacityRetry: (event) => retryEvents.push({
+      attempt: event.attempt,
+      maxRetries: event.maxRetries,
+      delayMs: event.delayMs,
+    }),
+  });
+
+  assert.equal(calls, 4);
+  assert.deepEqual(labels, ["key-1", "key-2", "key-1", "key-2"]);
+  assert.equal(task.video_id, "vid-cycle-1-key-2");
+  assert.equal(task.keyLabel, "key-2");
+  assert.deepEqual(delays, [30_000]);
+  assert.deepEqual(retryEvents, [
+    { attempt: 1, maxRetries: 2, delayMs: 30_000 },
+  ]);
+});
+
+test("removes credit-exhausted key and continues capacity retries with remaining keys", async () => {
+  let calls = 0;
+  const labels: string[] = [];
+  const delays: number[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["key-out-of-credits", "key-queue-full"],
+    capacityMaxRetries: 2,
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async (_input, init) => {
+      calls += 1;
+      const auth = String(init?.headers && "authorization" in init.headers ? (init.headers as Record<string, string>).authorization : "");
+      if (auth.includes("key-out-of-credits")) {
+        return jsonResponse({
+          code: "insufficient_credits",
+          message: "Account credits depleted",
+        }, 402);
+      }
+      if (calls <= 2) {
+        return jsonResponse({
+          code: "video_queue_full",
+          message: "video queue is full",
+        }, 503);
+      }
+      return jsonResponse({
+        video_id: "vid-credit-survivor",
+        task_id: "task-credit-survivor",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "Forest in the rain",
+    seconds: 6,
+    aspectRatio: "16:9",
+    onAttempt: ({ keyLabel }) => labels.push(keyLabel),
+  });
+
+  // Call 1: key-out-of-credits (key-1) -> 402 (permanently removed)
+  // Call 2: key-queue-full (key-2) -> 503 queue full
+  // Sleep 30_000
+  // Call 3: key-queue-full (key-2) -> 200 OK
+  assert.equal(calls, 3);
+  assert.deepEqual(labels, ["key-1", "key-2", "key-2"]);
+  assert.equal(task.video_id, "vid-credit-survivor");
+  assert.equal(task.keyLabel, "key-2");
+  assert.deepEqual(delays, [30_000]);
+});
+
+test("each key exhausts its individual max retries count while waiting 30s before its next retry", async () => {
+  let calls = 0;
+  const labels: string[] = [];
+  const delays: number[] = [];
+  const client = new AgnesVideoClient({
+    apiKeys: ["key-1", "key-2", "key-3"],
+    capacityMaxRetries: 1,
+    sleep: async (ms) => { delays.push(ms); },
+    fetch: async () => {
+      calls += 1;
+      // Round 0: key-1 (call 1), key-2 (call 2), key-3 (call 3) all fail queue full
+      // Sleep 30_000
+      // Round 1: key-1 (call 4), key-2 (call 5) fail; key-3 (call 6) succeeds
+      if (calls < 6) {
+        return jsonResponse({
+          code: "video_queue_full",
+          message: "video queue is full",
+        }, 503);
+      }
+      return jsonResponse({
+        video_id: "vid-key-3-final-retry",
+        task_id: "task-key-3-final-retry",
+        model: AGNES_VIDEO_MODEL,
+        status: "queued",
+        progress: 0,
+      });
+    },
+  });
+
+  const task = await client.submitVideo({
+    prompt: "Mountain sunrise",
+    seconds: 6,
+    aspectRatio: "16:9",
+    onAttempt: ({ keyLabel }) => labels.push(keyLabel),
+  });
+
+  assert.equal(calls, 6);
+  assert.deepEqual(labels, ["key-1", "key-2", "key-3", "key-1", "key-2", "key-3"]);
+  assert.equal(task.video_id, "vid-key-3-final-retry");
+  assert.equal(task.keyLabel, "key-3");
+  assert.deepEqual(delays, [30_000]);
 });
 
 test("retries queue-full response twice with 30s interval and succeeds on attempt 3 when capacityMaxRetries is 2", async () => {
@@ -711,12 +896,12 @@ test("poll accepts documented metadata.url and the live top-level completed url"
       return calls === 1
         ? jsonResponse(providerTask({ status: "in_progress", progress: 70 }))
         : jsonResponse(providerTask({
-            status: "completed",
-            progress: 100,
-            url: "https://wrong.example/top-level.mp4",
-            output_url: "https://wrong.example/output.mp4",
-            metadata: { url: finalUrl },
-          }));
+          status: "completed",
+          progress: 100,
+          url: "https://wrong.example/top-level.mp4",
+          output_url: "https://wrong.example/output.mp4",
+          metadata: { url: finalUrl },
+        }));
     },
   });
   let clock = 0;
