@@ -395,6 +395,7 @@ export class VideoRunStateStore {
       progress: number;
       url?: string;
       error?: string;
+      retrySafe?: boolean;
       details?: Record<string, unknown>;
     },
   ): Promise<ArtifactCheckpoint> {
@@ -429,7 +430,9 @@ export class VideoRunStateStore {
         },
         providerJob: input.providerJob,
         providerStatus: input.providerStatus,
-        retrySafe: input.providerStatus === "failed" ? false : undefined,
+        retrySafe: input.providerStatus === "failed"
+          ? (input.retrySafe ?? false)
+          : undefined,
         error: input.providerStatus === "failed"
           ? (input.error ?? "Agnes reported that the accepted video task failed.")
           : undefined,

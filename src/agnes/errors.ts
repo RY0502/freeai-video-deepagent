@@ -217,6 +217,20 @@ export function isAgnesProviderCapacityRejection(payload: unknown): boolean {
     || /\bqueues?\s+(?:limit|quota)\s+(?:reached|exceeded)\b/.test(text);
 }
 
+/**
+ * Checks whether an Agnes error payload or error message represents a task-level
+ * transient failure that should be retried fresh rather than treated as a fatal terminal error.
+ * For example: "queue group dispatch failed after 1 attempts: media URL could not be downloaded..."
+ */
+export function isRetrySafeAgnesTaskError(payload: unknown): boolean {
+  const text = normalizedDiagnostics(payload);
+  return (
+    text.includes("queue group dispatch failed")
+    || text.includes("media url could not be downloaded")
+    || (text.includes("dispatch failed") && text.includes("attempts"))
+  );
+}
+
 export interface ClassifyAgnesErrorOptions {
   keyLabel?: string;
   keys?: readonly string[];

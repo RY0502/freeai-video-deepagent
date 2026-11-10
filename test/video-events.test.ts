@@ -725,6 +725,108 @@ test("an ambiguous pre-receipt checkpoint allows resubmission and submits the vi
   }
 });
 
+test("a retry-safe task failure clears providerJob and resubmits afresh on next invocation", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "agnes-video-retry-safe-failure-"));
+  const runId = new VideoRunStateStore(path.join(root, "placeholder")).promptHash(PROMPT);
+  const runDirectory = path.join(root, runId);
+  const state = new VideoRunStateStore(runDirectory);
+  const events: VideoAgentEvent[] = [];
+  let submissions = 0;
+
+  try {
+    await state.ensureManifest(PROMPT);
+    await state.savePlan(PROMPT, plan());
+
+    // First invocation: task starts and Agnes poll returns failed with queue group dispatch failure
+    const failedTask: AgnesVideoTask = {
+      ...task("failed", 100),
+      video_id: "task_yJpfGjTgve0hPqO42tOdImYFolb7ufss",
+      error: {
+        code: "task_failed",
+        message: "queue group dispatch failed after 1 attempts: media URL could not be downloaded or did not return valid supported media.",
+      },
+    };
+
+    const firstRun = createVideoAgentTools({
+      originalPrompt: PROMPT,
+      runDirectory,
+      config: loadConfig({}),
+      stateStore: state,
+      agnes: {
+        async submitVideo(request: AgnesSubmitVideoRequest) {
+          submissions += 1;
+          request.onAttempt?.({ keyLabel: "key-1" });
+          return task("queued", 0);
+        },
+        async pollUntilTerminal() {
+          return { outcome: "failed" as const, task: failedTask };
+        },
+      } as unknown as AgnesVideoClient,
+      elevenLabs: {} as ElevenLabsClient,
+      freeAiMusic: {} as FreeAiMusicClient,
+      onEvent: (event) => events.push(event),
+    });
+
+    const firstResult = JSON.parse(String(
+      await tool(firstRun, VIDEO_TOOL_NAMES.generateVideo).invoke({}),
+    )) as Record<string, unknown>;
+
+    assert.equal(firstResult.status, "failed");
+    assert.equal(firstResult.retrySafe, true);
+    assert.equal(firstResult.retryOn, "next_invocation");
+
+    const checkpointAfterFail = await state.loadCheckpoint(
+      PROMPT,
+      videoCheckpointKeys.sourceVideo,
+    );
+    assert.equal(checkpointAfterFail?.status, "failed");
+    assert.equal(checkpointAfterFail?.retrySafe, true);
+    assert.equal(checkpointAfterFail?.providerJob, undefined);
+    assert.equal(checkpointAfterFail?.details?.failedVideoIdIgnored, "task_yJpfGjTgve0hPqO42tOdImYFolb7ufss");
+
+    // Second invocation: submits afresh and gets a new video id
+    const secondRun = createVideoAgentTools({
+      originalPrompt: PROMPT,
+      runDirectory,
+      config: loadConfig({}),
+      stateStore: state,
+      agnes: {
+        async submitVideo(request: AgnesSubmitVideoRequest) {
+          submissions += 1;
+          request.onAttempt?.({ keyLabel: "key-1" });
+          return {
+            ...task("queued", 0),
+            video_id: "task_new_fresh_video_id_12345",
+          };
+        },
+        async pollUntilTerminal(initial: AgnesVideoTask) {
+          return { outcome: "timed_out" as const, task: initial };
+        },
+      } as unknown as AgnesVideoClient,
+      elevenLabs: {} as ElevenLabsClient,
+      freeAiMusic: {} as FreeAiMusicClient,
+      onEvent: (event) => events.push(event),
+    });
+
+    const secondResult = JSON.parse(String(
+      await tool(secondRun, VIDEO_TOOL_NAMES.generateVideo).invoke({}),
+    )) as Record<string, unknown>;
+
+    assert.equal(secondResult.status, "pending");
+    assert.equal(submissions, 2);
+    assert.equal(secondResult.videoId, "task_new_fresh_video_id_12345");
+
+    const acceptedCheckpoint = await state.loadCheckpoint(
+      PROMPT,
+      videoCheckpointKeys.sourceVideo,
+    );
+    assert.equal(acceptedCheckpoint?.attempt, 2);
+    assert.equal(acceptedCheckpoint?.providerJob?.videoId, "task_new_fresh_video_id_12345");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("a fresh queue-full rejection is retry-safe and the next invocation submits again", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "agnes-video-capacity-retry-"));
   const runId = new VideoRunStateStore(path.join(root, "placeholder")).promptHash(PROMPT);

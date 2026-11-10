@@ -13,6 +13,7 @@ import {
   AGNES_VIDEO_MODEL,
   AgnesError,
   isAgnesProviderCapacityRejection,
+  isRetrySafeAgnesTaskError,
   type AgnesTaskStatus,
   type AgnesVideoClient,
   type AgnesVideoTask,
@@ -2775,11 +2776,28 @@ export function createVideoAgentTools(options: CreateVideoAgentToolsOptions): Vi
 
       if (task.status === "failed") {
         const message = taskError(task);
+        const retrySafe = isRetrySafeAgnesTaskError(message) || isRetrySafeAgnesTaskError(task.error);
+        if (retrySafe) {
+          await stateStore.resetCheckpointForRetry(
+            originalPrompt,
+            key,
+            message,
+            {
+              failedVideoIdIgnored: task.video_id,
+              retrySafeTaskFailure: true,
+            },
+            AGNES_VIDEO_MODEL,
+          );
+          invocationFailure = message;
+          emitEvent(options.onEvent, { event: "video_generation_failed", reason: message, retrySafe: true, source: "provider" });
+          return json({ status: "failed", reason: message, retrySafe: true, retryOn: "next_invocation", failedVideoId: task.video_id });
+        }
         await stateStore.updateProviderJobCheckpoint(originalPrompt, key, {
           providerJob: providerJobFromTask(task, digest),
           providerStatus: "failed",
           progress: task.progress,
           error: message,
+          retrySafe: false,
         });
         invocationFailure = message;
         emitEvent(options.onEvent, { event: "video_generation_failed", reason: message, retrySafe: false, source: "provider" });
